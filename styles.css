@@ -120,6 +120,33 @@ html, body {
   margin: 14px 4px 10px;
 }
 
+.live-now {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--live) 14%, transparent),
+    transparent);
+  border-radius: var(--radius);
+  padding: 4px 8px 8px;
+  margin: -4px -8px 22px;
+}
+.live-header {
+  color: var(--live);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pulse-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 50%, transparent);
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 50%, transparent); }
+  50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--live) 0%, transparent); }
+}
+
 .match {
   background: var(--surface);
   border: 1px solid var(--border);

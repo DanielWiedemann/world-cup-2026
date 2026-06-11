@@ -7,6 +7,8 @@ const TOURNAMENT_START = '2026-06-11';
 const TOURNAMENT_END = '2026-07-19';
 const CACHE_KEY = 'wc2026.events.v1';
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const LIVE_POLL_MS = 30 * 1000; // 30 seconds while something's live
+const KICKOFF_WINDOW_MS = 10 * 60 * 1000; // start polling 10 min before kickoff
 
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
 const $ = (sel) => document.querySelector(sel);
@@ -17,6 +19,7 @@ const refreshBtn = $('#refresh');
 $('#tz-label').textContent = `Times shown in ${tz}`;
 
 let state = { events: [], filter: 'upcoming', loading: false };
+let pollTimer = null;
 
 document.querySelectorAll('.filter').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -27,6 +30,11 @@ document.querySelectorAll('.filter').forEach((btn) => {
   });
 });
 refreshBtn.addEventListener('click', () => load({ force: true }));
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && hasActiveMatches()) livePoll();
+  updateLivePolling();
+});
 
 function ymd(d) {
   const y = d.getUTCFullYear();
@@ -105,6 +113,58 @@ function saveCache(events) {
       JSON.stringify({ events, fetchedAt: Date.now() })
     );
   } catch {}
+}
+
+function hasActiveMatches() {
+  const now = Date.now();
+  return state.events.some((e) => {
+    if (e.state === 'in') return true;
+    if (e.state === 'pre') {
+      const t = new Date(e.date).getTime();
+      return t - now < KICKOFF_WINDOW_MS && t - now > -KICKOFF_WINDOW_MS;
+    }
+    return false;
+  });
+}
+
+function updateLivePolling() {
+  const shouldPoll = !document.hidden && hasActiveMatches();
+  if (shouldPoll && !pollTimer) {
+    pollTimer = setInterval(livePoll, LIVE_POLL_MS);
+    document.body.classList.add('is-live');
+  } else if (!shouldPoll && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+    document.body.classList.remove('is-live');
+  }
+}
+
+async function livePoll() {
+  const now = new Date();
+  const dates = new Set();
+  dates.add(ymd(now));
+  const tomorrow = new Date(now);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  dates.add(ymd(tomorrow));
+  for (const e of state.events) {
+    if (e.state === 'in') dates.add(ymd(new Date(e.date)));
+  }
+  try {
+    const results = await Promise.allSettled([...dates].map(fetchDate));
+    const fresh = [];
+    for (const r of results) if (r.status === 'fulfilled') fresh.push(...r.value);
+    if (!fresh.length) return;
+    const map = new Map(state.events.map((e) => [e.id, e]));
+    for (const e of fresh) map.set(e.id, e);
+    state.events = Array.from(map.values()).sort(
+      (a, b) => new Date(a.date) - new Date(b.date)
+    );
+    saveCache(state.events);
+    setUpdated(Date.now());
+    render();
+  } catch (err) {
+    console.error('Live poll failed', err);
+  }
 }
 
 async function load({ force = false } = {}) {
@@ -276,19 +336,33 @@ function render() {
     matchesEl.innerHTML = state.events.length
       ? `<p class="empty">No matches match this filter.</p>`
       : `<p class="empty">Loading fixtures…</p>`;
+    updateLivePolling();
     return;
   }
-  const groups = groupByDay(filtered);
-  matchesEl.innerHTML = groups
-    .map(
-      ([day, evs]) => `
+  const liveEvents = filtered.filter((e) => e.state === 'in');
+  const otherEvents = filtered.filter((e) => e.state !== 'in');
+  const liveSection = liveEvents.length
+    ? `<section class="day live-now">
+         <h2 class="day-header live-header">
+           <span class="pulse-dot" aria-hidden="true"></span>Live now
+         </h2>
+         ${liveEvents.map(matchCard).join('')}
+       </section>`
+    : '';
+  const groups = groupByDay(otherEvents);
+  matchesEl.innerHTML =
+    liveSection +
+    groups
+      .map(
+        ([day, evs]) => `
       <section class="day">
         <h2 class="day-header">${escapeHtml(formatDayLabel(day))}</h2>
         ${evs.map(matchCard).join('')}
       </section>
     `
-    )
-    .join('');
+      )
+      .join('');
+  updateLivePolling();
 }
 
 load();
