@@ -812,29 +812,44 @@ function updateNextBanner() {
   const awayLogo = next.away?.logo
     ? `<img class="next-flag" src="${escapeHtml(next.away.logo)}" alt="" loading="lazy" />`
     : '';
-  // Show seconds only when under an hour so it doesn't tick on every refresh
-  // for the whole tournament.
-  const showSeconds = ms < 60 * 60 * 1000;
-  const countdownHtml = showSeconds
-    ? `
-      <span class="next-num">${m}</span><span class="next-unit">m</span>
-      <span class="next-num">${String(s).padStart(2, '0')}</span><span class="next-unit">s</span>`
-    : `
-      <span class="next-num">${h}</span><span class="next-unit">h</span>
-      <span class="next-num">${m}</span><span class="next-unit">m</span>`;
-  nextBannerEl.hidden = false;
-  nextBannerEl.innerHTML = `
-    <div class="next-meta">
-      <span class="next-label">Next match</span>
-      <span class="next-when">${escapeHtml(when)}</span>
-    </div>
-    <div class="next-teams">
-      <div class="next-team">${homeLogo}<span class="next-team-name">${escapeHtml(homeName)}</span></div>
-      <span class="next-vs">vs</span>
-      <div class="next-team">${awayLogo}<span class="next-team-name">${escapeHtml(awayName)}</span></div>
-    </div>
-    <div class="next-countdown-row">${countdownHtml}</div>
-  `;
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  const showHours = h > 0;
+  const block = (val, unit) => `
+    <div class="next-block">
+      <div class="next-num">${val}</div>
+      <div class="next-unit">${unit}</div>
+    </div>`;
+  const countdownHtml = showHours
+    ? `${block(hh, 'Hrs')}<span class="next-sep">:</span>${block(mm, 'Min')}<span class="next-sep">:</span>${block(ss, 'Sec')}`
+    : `${block(mm, 'Min')}<span class="next-sep">:</span>${block(ss, 'Sec')}`;
+  // Re-rendering the whole innerHTML every second would kill any digit
+  // transitions. So: build the static frame once per match change, then
+  // only patch the .next-num values on subsequent ticks.
+  const sig = `${next.id}|${showHours}`;
+  if (nextBannerEl.dataset.sig !== sig) {
+    nextBannerEl.hidden = false;
+    nextBannerEl.dataset.sig = sig;
+    nextBannerEl.innerHTML = `
+      <div class="next-meta">
+        <span class="next-label">Next match</span>
+        <span class="next-when">${escapeHtml(when)}</span>
+      </div>
+      <div class="next-teams">
+        <div class="next-team">${homeLogo}<span class="next-team-name">${escapeHtml(homeName)}</span></div>
+        <span class="next-vs">vs</span>
+        <div class="next-team">${awayLogo}<span class="next-team-name">${escapeHtml(awayName)}</span></div>
+      </div>
+      <div class="next-countdown-row">${countdownHtml}</div>
+    `;
+  } else {
+    const nums = nextBannerEl.querySelectorAll('.next-num');
+    const vals = showHours ? [hh, mm, ss] : [mm, ss];
+    nums.forEach((el, i) => {
+      if (el.textContent !== vals[i]) el.textContent = vals[i];
+    });
+  }
 }
 
 function sameLocalDay(a, b) {

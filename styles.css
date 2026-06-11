@@ -113,54 +113,56 @@ html, body {
   position: relative;
   max-width: var(--max-w);
   margin: 14px auto 0;
-  padding: 16px 18px;
+  padding: 18px 20px 20px;
   border-radius: 18px;
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(120% 140% at 0% 0%, #ff8a3d 0%, transparent 55%),
-    radial-gradient(120% 140% at 100% 100%, #1da7ff 0%, transparent 55%),
-    linear-gradient(135deg, #0c5c3c 0%, #07241b 100%);
+    radial-gradient(140% 100% at 50% 0%, rgba(25, 195, 125, 0.18) 0%, transparent 60%),
+    linear-gradient(155deg, #0e3d2b 0%, #082118 60%, #051613 100%);
   color: #fff;
   box-shadow:
-    0 12px 30px rgba(0,0,0,0.35),
+    0 10px 28px rgba(0,0,0,0.4),
     0 0 0 1px rgba(255,255,255,0.06) inset;
 }
 .next-banner[hidden] { display: none; }
-.next-banner::before {
+
+/* Slow horizontal shimmer — replaces the spinning conic gradient. */
+.next-banner::after {
   content: '';
   position: absolute;
-  inset: -2px;
-  border-radius: 20px;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    rgba(255,255,255,0.18) 30deg,
-    transparent 60deg,
-    transparent 360deg
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255, 220, 92, 0.07) 50%,
+    transparent 70%
   );
-  z-index: -1;
-  animation: banner-spin 8s linear infinite;
-  opacity: 0.6;
+  pointer-events: none;
+  animation: next-shimmer 6s linear infinite;
 }
-@keyframes banner-spin { to { transform: rotate(360deg); } }
+@keyframes next-shimmer {
+  0%   { transform: translateX(-60%); }
+  100% { transform: translateX(60%); }
+}
 
 .next-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 .next-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 11px;
+  letter-spacing: 0.16em;
+  font-size: 10.5px;
   font-weight: 800;
-  padding: 3px 8px 3px 7px;
-  background: rgba(255,255,255,0.15);
+  padding: 4px 10px 4px 9px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.08);
   border-radius: 999px;
 }
 .next-label::before {
@@ -169,29 +171,30 @@ html, body {
   height: 6px;
   border-radius: 50%;
   background: #ffdc5c;
-  box-shadow: 0 0 0 0 rgba(255, 220, 92, 0.7);
-  animation: next-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(255, 220, 92, 0.55);
+  animation: next-pulse 2s ease-in-out infinite;
 }
 @keyframes next-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 220, 92, 0.7); }
-  50%      { box-shadow: 0 0 0 7px rgba(255, 220, 92, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 220, 92, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 220, 92, 0); }
 }
 .next-when {
   font-size: 12px;
-  opacity: 0.85;
+  opacity: 0.75;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .next-teams {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 18px;
 }
 .next-team {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: 1;
   min-width: 0;
 }
@@ -200,59 +203,73 @@ html, body {
   text-align: right;
 }
 .next-team .next-flag {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
   flex-shrink: 0;
-  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));
 }
 .next-team .next-team-name {
   font-weight: 700;
   font-size: 15px;
+  letter-spacing: -0.005em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .next-vs {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.1em;
-  opacity: 0.6;
+  letter-spacing: 0.18em;
+  opacity: 0.45;
   flex-shrink: 0;
 }
 
+/* Pro broadcast-style stacked countdown. */
 .next-countdown-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
-  gap: 4px;
-  margin-top: 6px;
+  gap: 12px;
+  margin: 2px 0 0;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.next-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 58px;
 }
 .next-num {
-  font-size: 30px;
+  font-size: 44px;
   font-weight: 800;
   line-height: 1;
-  background: linear-gradient(180deg, #fff 0%, #ffd45c 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  text-shadow: 0 0 16px rgba(255, 212, 92, 0.25);
-  min-width: 44px;
-  text-align: center;
+  letter-spacing: -0.02em;
+  color: #fff;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.4);
 }
 .next-unit {
-  font-size: 12px;
+  margin-top: 6px;
+  font-size: 9.5px;
   font-weight: 700;
-  opacity: 0.7;
-  margin-right: 8px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.55);
 }
-.next-unit:last-child { margin-right: 0; }
+.next-sep {
+  font-size: 32px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.2);
+  line-height: 1;
+  margin: 0 -6px;
+  align-self: flex-start;
+  padding-top: 8px;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .next-banner::before, .next-label::before { animation: none; }
+  .next-banner::after,
+  .next-label::before { animation: none; }
 }
 
 .matches {
