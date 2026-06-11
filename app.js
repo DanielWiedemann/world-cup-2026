@@ -10,6 +10,12 @@ const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const LIVE_POLL_MS = 30 * 1000; // 30 seconds while something's live
 const KICKOFF_WINDOW_MS = 10 * 60 * 1000; // start polling 10 min before kickoff
 
+// Web Push — points at the deployed Cloudflare Worker.
+// Leave empty to hide the notifications button.
+const PUSH_API = 'https://world-cup-2026-push.daniel-w.workers.dev';
+const VAPID_PUBLIC_KEY =
+  'BHwaEQEYH_vgR8brwqEJv05iyh3Ze-GmtaLX_NRmyqWs3aTirufT10AnbaXbaVpd0geqZ7o-cvuooHTdR4dTLEc';
+
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
 const $ = (sel) => document.querySelector(sel);
 const matchesEl = $('#matches');
@@ -35,6 +41,83 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && hasActiveMatches()) livePoll();
   updateLivePolling();
 });
+
+// --- Web Push wiring (only if PUSH_API is configured) ---------------------
+const notifyBtn = $('#notify');
+if (PUSH_API && 'serviceWorker' in navigator && 'PushManager' in window) {
+  notifyBtn.hidden = false;
+  refreshNotifyButton();
+  notifyBtn.addEventListener('click', toggleNotifications);
+}
+
+async function getCurrentSubscription() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function refreshNotifyButton() {
+  try {
+    const sub = await getCurrentSubscription();
+    const enabled = !!sub && Notification.permission === 'granted';
+    notifyBtn.classList.toggle('on', enabled);
+    notifyBtn.title = enabled ? 'Disable notifications' : 'Enable notifications';
+    notifyBtn.setAttribute(
+      'aria-label',
+      enabled ? 'Disable notifications' : 'Enable notifications'
+    );
+  } catch {}
+}
+
+async function toggleNotifications() {
+  try {
+    const existing = await getCurrentSubscription();
+    if (existing) {
+      await fetch(`${PUSH_API}/unsubscribe`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      }).catch(() => {});
+      await existing.unsubscribe();
+      setStatus('Notifications off');
+    } else {
+      if (Notification.permission === 'denied') {
+        setStatus('Allow notifications in your browser settings.');
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        setStatus('Notifications not enabled.');
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      const res = await fetch(`${PUSH_API}/subscribe`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      });
+      if (!res.ok) throw new Error('subscribe failed: ' + res.status);
+      setStatus('Notifications on');
+    }
+    refreshNotifyButton();
+    setTimeout(() => setStatus(''), 2500);
+  } catch (err) {
+    console.error(err);
+    setStatus('Could not change notifications');
+  }
+}
+
+function urlBase64ToUint8Array(b64) {
+  const padding = '='.repeat((4 - (b64.length % 4)) % 4);
+  const base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
 
 function ymd(d) {
   const y = d.getUTCFullYear();

@@ -1,0 +1,23 @@
+name = "world-cup-2026-push"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cron trigger — runs every minute while the tournament is on.
+[triggers]
+crons = ["* * * * *"]
+
+# Non-secret config
+[vars]
+VAPID_PUBLIC_KEY = "BHwaEQEYH_vgR8brwqEJv05iyh3Ze-GmtaLX_NRmyqWs3aTirufT10AnbaXbaVpd0geqZ7o-cvuooHTdR4dTLEc"
+VAPID_SUBJECT = "mailto:daniel.wiedemann@gmail.com"
+ALLOWED_ORIGIN = "https://danielwiedemann.github.io"
+TOURNAMENT_START = "2026-06-11"
+TOURNAMENT_END   = "2026-07-19"
+
+# KV namespace for last-seen event state + push subscriptions.
+# Created via:  wrangler kv namespace create STATE
+# Paste the returned id below, then `wrangler deploy`.
+[[kv_namespaces]]
+binding = "STATE"
+id = "e0d4c27b511742b79ee29202aee96833"

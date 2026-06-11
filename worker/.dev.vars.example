@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev` (DO NOT COMMIT .dev.vars).
+# For production, set this as a Worker secret instead:
+#   wrangler secret put VAPID_PRIVATE_KEY
+VAPID_PRIVATE_KEY="paste-private-key-here"

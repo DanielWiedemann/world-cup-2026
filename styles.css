@@ -58,6 +58,8 @@ html, body {
   letter-spacing: 0.2px;
 }
 
+.actions { display: flex; gap: 6px; }
+
 .icon-btn {
   background: rgba(255,255,255,0.12);
   color: #fff;
@@ -72,6 +74,10 @@ html, body {
 }
 .icon-btn:hover { background: rgba(255,255,255,0.2); }
 .icon-btn.spin { animation: spin 0.9s linear infinite; }
+.icon-btn .bell-on { display: none; }
+.icon-btn.on .bell-off { display: none; }
+.icon-btn.on .bell-on { display: block; }
+.icon-btn.on { background: rgba(255,255,255,0.22); }
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
 .meta-row {

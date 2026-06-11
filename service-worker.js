@@ -1,4 +1,4 @@
-const CACHE = 'wc2026-v2';
+const CACHE = 'wc2026-v4';
 const SHELL = [
   './',
   './index.html',
@@ -21,6 +21,42 @@ self.addEventListener('activate', (e) => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'World Cup', body: e.data ? e.data.text() : '' }; }
+  const title = data.title || 'World Cup 2026';
+  const body = data.body || '';
+  const tag = data.type && data.eventId ? `${data.type}:${data.eventId}` : undefined;
+  const url = data.url || '/';
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      tag,
+      renotify: !!tag,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      data: { url },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(
+    (async () => {
+      const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of all) {
+        if ('focus' in client) {
+          client.navigate(url);
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) await self.clients.openWindow(url);
+    })()
+  );
 });
 
 self.addEventListener('fetch', (e) => {

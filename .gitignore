@@ -14,5 +14,10 @@ android/
 ios/
 www/
 
+# Cloudflare Worker
+worker/.wrangler/
+worker/.dev.vars
+worker/dist/
+
 # Local
 .claude/
