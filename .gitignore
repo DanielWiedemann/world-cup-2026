@@ -20,5 +20,10 @@ worker/.dev.vars
 worker/.admin-token
 worker/dist/
 
+# PWABuilder Android package (regenerated from PWA URL; keystore must be
+# backed up SEPARATELY by the user — losing it means losing the ability
+# to publish updates to Play Store)
+android-package/
+
 # Local
 .claude/
