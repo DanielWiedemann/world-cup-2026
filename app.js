@@ -22,10 +22,23 @@ const matchesEl = $('#matches');
 const statusEl = $('#status');
 const updatedEl = $('#updated');
 const refreshBtn = $('#refresh');
+const nextBannerEl = $('#next-banner');
 $('#tz-label').textContent = `Times shown in ${tz}`;
 
-let state = { events: [], filter: 'upcoming', loading: false };
+const STATS_BASE =
+  'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary';
+const STATS_CACHE_KEY = 'wc2026.stats.v1';
+const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours; live matches force refresh
+
+let state = {
+  events: [],
+  filter: 'upcoming',
+  loading: false,
+  expanded: new Set(),
+  stats: loadStatsCache(),
+};
 let pollTimer = null;
+let nextBannerTimer = null;
 
 document.querySelectorAll('.filter').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -40,7 +53,22 @@ refreshBtn.addEventListener('click', () => load({ force: true }));
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && hasActiveMatches()) livePoll();
   updateLivePolling();
+  updateNextBanner();
 });
+
+matchesEl.addEventListener('click', (e) => {
+  const card = e.target.closest('.match');
+  if (!card) return;
+  if (card.classList.contains('pre')) return; // No stats for upcoming.
+  const id = card.dataset.eventId;
+  if (!id) return;
+  if (state.expanded.has(id)) state.expanded.delete(id);
+  else state.expanded.add(id);
+  render();
+  if (state.expanded.has(id)) ensureStats(id);
+});
+
+nextBannerTimer = setInterval(updateNextBanner, 30 * 1000);
 
 // --- Web Push wiring (only if PUSH_API is configured) ---------------------
 const PREF_KEYS = ['preGame', 'kickoff', 'goal', 'final'];
@@ -462,6 +490,13 @@ function filterEvents(events) {
   if (state.filter === 'upcoming') {
     return events.filter((e) => e.state !== 'post' && new Date(e.date).getTime() > now - 3 * 60 * 60 * 1000);
   }
+  if (state.filter === 'past') {
+    // Most-recent first.
+    return events
+      .filter((e) => e.state === 'post')
+      .slice()
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }
   return events;
 }
 
@@ -472,7 +507,8 @@ function groupByDay(events) {
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(e);
   }
-  return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const entries = Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  return state.filter === 'past' ? entries.reverse() : entries;
 }
 
 function escapeHtml(s) {
@@ -493,6 +529,8 @@ function matchCard(e) {
   const live = e.state === 'in';
   const done = e.state === 'post';
   const upcoming = e.state === 'pre';
+  const expandable = !upcoming;
+  const isExpanded = state.expanded.has(e.id);
   const score =
     !upcoming && e.home && e.away
       ? `<div class="score"><span>${escapeHtml(e.home.score)}</span><span class="dash">–</span><span>${escapeHtml(e.away.score)}</span></div>`
@@ -505,8 +543,12 @@ function matchCard(e) {
   const venue = e.venue
     ? `<div class="venue">${escapeHtml(e.venue)}${e.city ? ', ' + escapeHtml(e.city) : ''}</div>`
     : '';
+  const statsBlock = expandable && isExpanded ? renderStats(e) : '';
+  const hint = expandable
+    ? `<span class="expand-hint" aria-hidden="true">${isExpanded ? '▴' : '▾'}</span>`
+    : '';
   return `
-    <article class="match ${e.state}">
+    <article class="match ${e.state}${isExpanded ? ' expanded' : ''}${expandable ? ' expandable' : ''}" data-event-id="${escapeHtml(e.id)}">
       <div class="match-top">
         ${teamMarkup(e.home)}
         ${score}
@@ -515,8 +557,153 @@ function matchCard(e) {
       <div class="match-bottom">
         ${badge}
         ${venue}
+        ${hint}
       </div>
+      ${statsBlock}
     </article>
+  `;
+}
+
+function renderStats(e) {
+  const entry = state.stats[e.id];
+  if (!entry) {
+    return `<div class="stats loading">Loading stats…</div>`;
+  }
+  if (entry.error) {
+    return `<div class="stats empty">${escapeHtml(entry.error)}</div>`;
+  }
+  if (!entry.rows || !entry.rows.length) {
+    return `<div class="stats empty">No stats available yet.</div>`;
+  }
+  const homeName = e.home?.short || e.home?.name || 'Home';
+  const awayName = e.away?.short || e.away?.name || 'Away';
+  const rowsHtml = entry.rows
+    .map(
+      (row) => `
+      <tr>
+        <td class="stat-val home">${escapeHtml(row.home)}</td>
+        <td class="stat-label">${escapeHtml(row.label)}</td>
+        <td class="stat-val away">${escapeHtml(row.away)}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+    <div class="stats">
+      <table class="stats-table">
+        <thead><tr><th>${escapeHtml(homeName)}</th><th></th><th>${escapeHtml(awayName)}</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+const STATS_LABELS = {
+  possessionPct: 'Possession',
+  totalShots: 'Shots',
+  shotsOnTarget: 'Shots on target',
+  wonCorners: 'Corners',
+  foulsCommitted: 'Fouls',
+  yellowCards: 'Yellow cards',
+  redCards: 'Red cards',
+  saves: 'Saves',
+  offsides: 'Offsides',
+};
+const STATS_ORDER = Object.keys(STATS_LABELS);
+
+function loadStatsCache() {
+  try {
+    const raw = localStorage.getItem(STATS_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStatsCache() {
+  try {
+    localStorage.setItem(STATS_CACHE_KEY, JSON.stringify(state.stats));
+  } catch {}
+}
+
+async function ensureStats(eventId) {
+  const ev = state.events.find((e) => e.id === eventId);
+  const cached = state.stats[eventId];
+  const isLive = ev && ev.state === 'in';
+  const isFresh =
+    cached &&
+    cached.fetchedAt &&
+    Date.now() - cached.fetchedAt < (isLive ? 30 * 1000 : STATS_CACHE_TTL_MS);
+  if (cached && isFresh && !cached.error) return;
+  if (cached && cached.loading) return;
+  state.stats[eventId] = { ...(cached || {}), loading: true };
+  try {
+    const res = await fetch(`${STATS_BASE}?event=${encodeURIComponent(eventId)}`);
+    if (!res.ok) throw new Error('ESPN ' + res.status);
+    const data = await res.json();
+    const rows = extractStatRows(data);
+    state.stats[eventId] = { rows, fetchedAt: Date.now() };
+    saveStatsCache();
+    if (state.expanded.has(eventId)) render();
+  } catch (err) {
+    state.stats[eventId] = {
+      error: 'Could not load stats.',
+      fetchedAt: Date.now(),
+    };
+    if (state.expanded.has(eventId)) render();
+  }
+}
+
+function extractStatRows(data) {
+  const teams = data && data.boxscore && data.boxscore.teams;
+  if (!Array.isArray(teams) || teams.length < 2) return [];
+  const home = teams.find((t) => t.homeAway === 'home') || teams[0];
+  const away = teams.find((t) => t.homeAway === 'away') || teams[1];
+  const homeStats = mapStats(home.statistics || []);
+  const awayStats = mapStats(away.statistics || []);
+  const rows = [];
+  for (const key of STATS_ORDER) {
+    const h = homeStats[key];
+    const a = awayStats[key];
+    if (h == null && a == null) continue;
+    rows.push({ label: STATS_LABELS[key], home: h ?? '–', away: a ?? '–' });
+  }
+  return rows;
+}
+
+function mapStats(arr) {
+  const out = {};
+  for (const s of arr) {
+    if (!s || !s.name) continue;
+    out[s.name] = s.displayValue != null ? s.displayValue : s.value;
+  }
+  return out;
+}
+
+function updateNextBanner() {
+  if (!nextBannerEl) return;
+  const now = Date.now();
+  const next = state.events.find(
+    (e) => e.state === 'pre' && new Date(e.date).getTime() > now
+  );
+  if (!next) {
+    nextBannerEl.hidden = true;
+    return;
+  }
+  const ms = new Date(next.date).getTime() - now;
+  if (ms > 48 * 60 * 60 * 1000) {
+    nextBannerEl.hidden = true;
+    return;
+  }
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const inText = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const homeName = next.home?.short || next.home?.name || 'TBD';
+  const awayName = next.away?.short || next.away?.name || 'TBD';
+  nextBannerEl.hidden = false;
+  nextBannerEl.innerHTML = `
+    <span class="next-label">Next</span>
+    <span class="next-match">${escapeHtml(homeName)} vs ${escapeHtml(awayName)}</span>
+    <span class="next-countdown">in ${inText}</span>
   `;
 }
 
@@ -553,6 +740,12 @@ function render() {
       )
       .join('');
   updateLivePolling();
+  updateNextBanner();
+  // Refresh stats for any expanded live match.
+  for (const id of state.expanded) {
+    const ev = state.events.find((e) => e.id === id);
+    if (ev && ev.state === 'in') ensureStats(id);
+  }
 }
 
 load();

@@ -109,6 +109,39 @@ html, body {
 }
 .filter.active { background: #fff; color: var(--accent-deep); }
 
+.next-banner {
+  max-width: var(--max-w);
+  margin: 12px auto 0;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+.next-banner[hidden] { display: none; }
+.next-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.next-match {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.next-countdown {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--accent);
+}
+
 .matches {
   max-width: var(--max-w);
   margin: 0 auto;
@@ -159,9 +192,61 @@ html, body {
   border-radius: var(--radius);
   padding: 14px 14px 12px;
   margin-bottom: 10px;
+  transition: border-color 0.15s ease;
 }
 .match.in { border-color: var(--live); box-shadow: 0 0 0 1px rgba(255,90,90,0.25); }
-.match.post { opacity: 0.78; }
+.match.post { opacity: 0.86; }
+.match.expandable { cursor: pointer; }
+.match.expandable:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.match.expanded { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+
+.expand-hint {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.stats {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.stats.loading, .stats.empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 14px 0 4px;
+  font-style: italic;
+}
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.stats-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 4px 4px 6px;
+  font-weight: 700;
+}
+.stats-table th:first-child { text-align: left; }
+.stats-table th:last-child { text-align: right; }
+.stats-table td {
+  padding: 5px 4px;
+}
+.stats-table .stat-label {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.stats-table .stat-val {
+  font-weight: 600;
+}
+.stats-table .stat-val.home { text-align: left; }
+.stats-table .stat-val.away { text-align: right; }
 
 .match-top {
   display: grid;
