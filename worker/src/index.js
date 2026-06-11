@@ -33,17 +33,29 @@ const PREGAME_MIN_MS = 25 * 60 * 1000;
 const PREGAME_MAX_MS = 35 * 60 * 1000;
 
 function defaultPrefs() {
-  return { preGame: true, kickoff: true, goal: true, final: true };
+  return {
+    preGame: true,
+    kickoff: true,
+    goal: true,
+    final: true,
+    teamFilter: false,
+    teams: [],
+  };
 }
 
 function sanitizePrefs(p) {
   const def = defaultPrefs();
   if (!p || typeof p !== 'object') return def;
+  const teams = Array.isArray(p.teams)
+    ? p.teams.filter((t) => typeof t === 'string' && t.length <= 10).slice(0, 64)
+    : def.teams;
   return {
     preGame: typeof p.preGame === 'boolean' ? p.preGame : def.preGame,
     kickoff: typeof p.kickoff === 'boolean' ? p.kickoff : def.kickoff,
     goal: typeof p.goal === 'boolean' ? p.goal : def.goal,
     final: typeof p.final === 'boolean' ? p.final : def.final,
+    teamFilter: typeof p.teamFilter === 'boolean' ? p.teamFilter : def.teamFilter,
+    teams,
   };
 }
 
@@ -199,6 +211,8 @@ async function runTick(env) {
     notifications.push({
       type: 'preGame',
       eventId: ev.id,
+      homeAbbr: ev.homeAbbr,
+      awayAbbr: ev.awayAbbr,
       title: `Starts in ~30 min: ${ev.name}`,
       body: `${ev.homeName} vs ${ev.awayName}`,
       url: '/',
@@ -235,11 +249,18 @@ async function runTick(env) {
     return;
   }
 
-  // Fan out: each subscriber only receives notifications they opted into.
+  // Fan out: each subscriber only receives notifications they opted into,
+  // for teams they're following (when team filter is on).
   const tasks = [];
   for (const n of notifications) {
     for (const s of subs) {
       if (!s.prefs[n.type]) continue;
+      if (s.prefs.teamFilter && s.prefs.teams.length) {
+        const interested =
+          (n.homeAbbr && s.prefs.teams.includes(n.homeAbbr)) ||
+          (n.awayAbbr && s.prefs.teams.includes(n.awayAbbr));
+        if (!interested) continue;
+      }
       tasks.push(sendOne(env, s.name, s.subscription, n));
     }
   }
@@ -309,6 +330,8 @@ function diffEvent(prev, curr) {
     out.push({
       type: 'kickoff',
       eventId: curr.id,
+      homeAbbr: curr.homeAbbr,
+      awayAbbr: curr.awayAbbr,
       title: `Kickoff: ${curr.name}`,
       body: `${curr.homeName} vs ${curr.awayName} just kicked off.`,
       url: '/',
@@ -328,6 +351,8 @@ function diffEvent(prev, curr) {
     out.push({
       type: 'final',
       eventId: curr.id,
+      homeAbbr: curr.homeAbbr,
+      awayAbbr: curr.awayAbbr,
       title: `FT: ${curr.homeName} ${curr.homeScore}-${curr.awayScore} ${curr.awayName}`,
       body: 'Full time.',
       url: '/',
@@ -340,6 +365,8 @@ function goalPush(ev, scorerSide) {
   return {
     type: 'goal',
     eventId: ev.id,
+    homeAbbr: ev.homeAbbr,
+    awayAbbr: ev.awayAbbr,
     title: `GOAL! ${ev.homeName} ${ev.homeScore}-${ev.awayScore} ${ev.awayName}`,
     body: `${scorerSide} scored. ${ev.minute || ''}`.trim(),
     url: '/',
@@ -361,6 +388,8 @@ function normalizeEvent(ev) {
     date: ev.date, // ISO UTC kickoff
     state: status.state || 'pre',
     minute: status.shortDetail || '',
+    homeAbbr: home.team.abbreviation,
+    awayAbbr: away.team.abbreviation,
     homeName: home.team.displayName,
     awayName: away.team.displayName,
     homeScore: home.score,

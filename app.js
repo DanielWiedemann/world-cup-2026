@@ -68,11 +68,14 @@ matchesEl.addEventListener('click', (e) => {
   if (state.expanded.has(id)) ensureStats(id);
 });
 
-nextBannerTimer = setInterval(updateNextBanner, 30 * 1000);
+// 1-sec tick keeps the seconds counter live when kickoff is under an hour;
+// the banner itself is hidden when nothing's within 48h, so the work is cheap.
+nextBannerTimer = setInterval(updateNextBanner, 1000);
 
 // --- Web Push wiring (only if PUSH_API is configured) ---------------------
 const PREF_KEYS = ['preGame', 'kickoff', 'goal', 'final'];
-const PREFS_STORAGE_KEY = 'wc2026.notif.prefs.v1';
+const PREFS_STORAGE_KEY = 'wc2026.notif.prefs.v2';
+let selectedTeams = new Set();
 const notifyBtn = $('#notify');
 const prefsDialog = $('#prefs-dialog');
 const prefsForm = $('#prefs-form');
@@ -83,7 +86,14 @@ const prefsCancelBtn = $('#prefs-cancel');
 const prefsDisableBtn = $('#prefs-disable');
 
 function defaultPrefs() {
-  return { preGame: true, kickoff: true, goal: true, final: true };
+  return {
+    preGame: true,
+    kickoff: true,
+    goal: true,
+    final: true,
+    teamFilter: false,
+    teams: [],
+  };
 }
 
 function loadPrefs() {
@@ -107,6 +117,9 @@ function readPrefsFromForm() {
     const input = prefsForm.querySelector(`input[data-key="${k}"]`);
     out[k] = !!(input && input.checked);
   }
+  const tfInput = prefsForm.querySelector(`input[data-key="teamFilter"]`);
+  out.teamFilter = !!(tfInput && tfInput.checked);
+  out.teams = Array.from(selectedTeams);
   return out;
 }
 
@@ -115,6 +128,59 @@ function writePrefsToForm(prefs) {
     const input = prefsForm.querySelector(`input[data-key="${k}"]`);
     if (input) input.checked = !!prefs[k];
   }
+  const tfInput = prefsForm.querySelector(`input[data-key="teamFilter"]`);
+  if (tfInput) tfInput.checked = !!prefs.teamFilter;
+  selectedTeams = new Set(Array.isArray(prefs.teams) ? prefs.teams : []);
+  renderTeamsPicker();
+}
+
+function getAllTeams() {
+  const seen = new Map();
+  for (const e of state.events) {
+    for (const t of [e.home, e.away]) {
+      if (!t || !t.abbr) continue;
+      // Real national teams have 2–4 pure-letter abbreviations (USA, BRA, KSA,
+      // BIH…). Placeholders like "1A", "QFW1", "RD16 W1", "3RD" contain digits
+      // or spaces — strip them out.
+      if (!/^[A-Z]{2,4}$/.test(t.abbr)) continue;
+      if (seen.has(t.abbr)) continue;
+      seen.set(t.abbr, { abbr: t.abbr, name: t.name || t.short || t.abbr, logo: t.logo });
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  );
+}
+
+function renderTeamsPicker() {
+  const picker = document.getElementById('teams-picker');
+  const grid = document.getElementById('teams-grid');
+  const tfInput = prefsForm.querySelector(`input[data-key="teamFilter"]`);
+  const enabled = !!(tfInput && tfInput.checked);
+  picker.hidden = !enabled;
+  if (!enabled) return;
+  const teams = getAllTeams();
+  grid.innerHTML = teams
+    .map((t) => {
+      const isSel = selectedTeams.has(t.abbr);
+      const logo = t.logo
+        ? `<img src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
+        : '';
+      return `<label class="team-chip${isSel ? ' selected' : ''}" data-abbr="${escapeHtml(t.abbr)}">
+        <input type="checkbox" ${isSel ? 'checked' : ''} />
+        ${logo}
+        <span class="team-chip-name">${escapeHtml(t.name)}</span>
+      </label>`;
+    })
+    .join('');
+  updateTeamsCount();
+}
+
+function updateTeamsCount() {
+  const el = document.getElementById('teams-count');
+  if (!el) return;
+  const total = getAllTeams().length;
+  el.textContent = `${selectedTeams.size} of ${total} selected`;
 }
 
 function setPrefsStatus(msg, isError = false) {
@@ -136,6 +202,36 @@ if (PUSH_API && 'serviceWorker' in navigator && 'PushManager' in window) {
       e.clientX >= rect.left && e.clientX <= rect.right &&
       e.clientY >= rect.top && e.clientY <= rect.bottom;
     if (!inForm) prefsDialog.close();
+  });
+
+  // Toggle the team picker when the team-filter switch flips.
+  prefsForm.addEventListener('change', (e) => {
+    if (e.target && e.target.dataset && e.target.dataset.key === 'teamFilter') {
+      renderTeamsPicker();
+    }
+  });
+
+  // Team chip clicks + All / None shortcuts.
+  prefsForm.addEventListener('click', (e) => {
+    const chip = e.target.closest('.team-chip');
+    if (chip) {
+      const abbr = chip.dataset.abbr;
+      if (selectedTeams.has(abbr)) selectedTeams.delete(abbr);
+      else selectedTeams.add(abbr);
+      chip.classList.toggle('selected');
+      const input = chip.querySelector('input[type="checkbox"]');
+      if (input) input.checked = selectedTeams.has(abbr);
+      updateTeamsCount();
+      return;
+    }
+    const action = e.target.closest('[data-team-action]');
+    if (action) {
+      e.preventDefault();
+      const kind = action.dataset.teamAction;
+      if (kind === 'all') selectedTeams = new Set(getAllTeams().map((t) => t.abbr));
+      if (kind === 'none') selectedTeams = new Set();
+      renderTeamsPicker();
+    }
   });
 }
 
@@ -696,15 +792,55 @@ function updateNextBanner() {
   }
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
-  const inText = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const s = Math.floor((ms % 60000) / 1000);
+  const kickoff = new Date(next.date);
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const isToday = sameLocalDay(kickoff, today);
+  const isTomorrow = sameLocalDay(kickoff, tomorrow);
+  const when = isToday
+    ? `Tonight · ${formatTime(next.date)}`
+    : isTomorrow
+    ? `Tomorrow · ${formatTime(next.date)}`
+    : `${kickoff.toLocaleDateString([], { weekday: 'short' })} · ${formatTime(next.date)}`;
   const homeName = next.home?.short || next.home?.name || 'TBD';
   const awayName = next.away?.short || next.away?.name || 'TBD';
+  const homeLogo = next.home?.logo
+    ? `<img class="next-flag" src="${escapeHtml(next.home.logo)}" alt="" loading="lazy" />`
+    : '';
+  const awayLogo = next.away?.logo
+    ? `<img class="next-flag" src="${escapeHtml(next.away.logo)}" alt="" loading="lazy" />`
+    : '';
+  // Show seconds only when under an hour so it doesn't tick on every refresh
+  // for the whole tournament.
+  const showSeconds = ms < 60 * 60 * 1000;
+  const countdownHtml = showSeconds
+    ? `
+      <span class="next-num">${m}</span><span class="next-unit">m</span>
+      <span class="next-num">${String(s).padStart(2, '0')}</span><span class="next-unit">s</span>`
+    : `
+      <span class="next-num">${h}</span><span class="next-unit">h</span>
+      <span class="next-num">${m}</span><span class="next-unit">m</span>`;
   nextBannerEl.hidden = false;
   nextBannerEl.innerHTML = `
-    <span class="next-label">Next</span>
-    <span class="next-match">${escapeHtml(homeName)} vs ${escapeHtml(awayName)}</span>
-    <span class="next-countdown">in ${inText}</span>
+    <div class="next-meta">
+      <span class="next-label">Next match</span>
+      <span class="next-when">${escapeHtml(when)}</span>
+    </div>
+    <div class="next-teams">
+      <div class="next-team">${homeLogo}<span class="next-team-name">${escapeHtml(homeName)}</span></div>
+      <span class="next-vs">vs</span>
+      <div class="next-team">${awayLogo}<span class="next-team-name">${escapeHtml(awayName)}</span></div>
+    </div>
+    <div class="next-countdown-row">${countdownHtml}</div>
   `;
+}
+
+function sameLocalDay(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
 }
 
 function render() {

@@ -92,6 +92,23 @@
             <input type="checkbox" name="final" data-key="final" />
           </label>
         </li>
+        <li class="prefs-divider">
+          <label>
+            <span>
+              <strong>Only specific teams</strong>
+              <small>Otherwise you get every match</small>
+            </span>
+            <input type="checkbox" name="teamFilter" data-key="teamFilter" />
+          </label>
+          <div class="teams-picker" id="teams-picker" hidden>
+            <div class="teams-actions">
+              <button type="button" class="teams-action" data-team-action="all">All</button>
+              <button type="button" class="teams-action" data-team-action="none">None</button>
+              <span class="teams-count" id="teams-count">0 selected</span>
+            </div>
+            <div class="teams-grid" id="teams-grid"></div>
+          </div>
+        </li>
       </ul>
       <p class="prefs-status" id="prefs-status" aria-live="polite"></p>
       <menu class="prefs-actions">
