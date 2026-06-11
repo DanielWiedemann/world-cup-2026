@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>World Cup 2026</title>
+  <meta name="description" content="Upcoming FIFA World Cup 2026 matches in your local timezone." />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0c5c3c" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="World Cup" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="title-row">
+      <h1>World Cup 2026</h1>
+      <button id="refresh" class="icon-btn" aria-label="Refresh" title="Refresh">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="meta-row">
+      <span id="tz-label" class="tz-label"></span>
+      <span id="status" class="status"></span>
+    </div>
+    <nav class="filters" role="tablist">
+      <button class="filter active" data-filter="upcoming" role="tab">Upcoming</button>
+      <button class="filter" data-filter="today" role="tab">Today</button>
+      <button class="filter" data-filter="all" role="tab">All</button>
+    </nav>
+  </header>
+
+  <main id="matches" class="matches"></main>
+
+  <footer class="app-footer">
+    <span>Data: ESPN</span>
+    <span id="updated"></span>
+  </footer>
+
+  <script src="app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

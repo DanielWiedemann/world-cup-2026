@@ -1,0 +1,16 @@
+{
+  "name": "World Cup 2026",
+  "short_name": "World Cup",
+  "description": "Upcoming FIFA World Cup 2026 matches in your local timezone.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1411",
+  "theme_color": "#0c5c3c",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
