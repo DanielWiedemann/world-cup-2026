@@ -43,11 +43,72 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // --- Web Push wiring (only if PUSH_API is configured) ---------------------
+const PREF_KEYS = ['preGame', 'kickoff', 'goal', 'final'];
+const PREFS_STORAGE_KEY = 'wc2026.notif.prefs.v1';
 const notifyBtn = $('#notify');
+const prefsDialog = $('#prefs-dialog');
+const prefsForm = $('#prefs-form');
+const prefsStatus = $('#prefs-status');
+const prefsSub = $('#prefs-sub');
+const prefsSaveBtn = $('#prefs-save');
+const prefsCancelBtn = $('#prefs-cancel');
+const prefsDisableBtn = $('#prefs-disable');
+
+function defaultPrefs() {
+  return { preGame: true, kickoff: true, goal: true, final: true };
+}
+
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(PREFS_STORAGE_KEY);
+    if (!raw) return defaultPrefs();
+    const p = JSON.parse(raw);
+    return { ...defaultPrefs(), ...p };
+  } catch {
+    return defaultPrefs();
+  }
+}
+
+function savePrefs(prefs) {
+  try { localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs)); } catch {}
+}
+
+function readPrefsFromForm() {
+  const out = {};
+  for (const k of PREF_KEYS) {
+    const input = prefsForm.querySelector(`input[data-key="${k}"]`);
+    out[k] = !!(input && input.checked);
+  }
+  return out;
+}
+
+function writePrefsToForm(prefs) {
+  for (const k of PREF_KEYS) {
+    const input = prefsForm.querySelector(`input[data-key="${k}"]`);
+    if (input) input.checked = !!prefs[k];
+  }
+}
+
+function setPrefsStatus(msg, isError = false) {
+  prefsStatus.textContent = msg || '';
+  prefsStatus.classList.toggle('error', !!isError);
+}
+
 if (PUSH_API && 'serviceWorker' in navigator && 'PushManager' in window) {
   notifyBtn.hidden = false;
   refreshNotifyButton();
-  notifyBtn.addEventListener('click', toggleNotifications);
+  notifyBtn.addEventListener('click', openPrefsDialog);
+  prefsCancelBtn.addEventListener('click', () => prefsDialog.close());
+  prefsDisableBtn.addEventListener('click', disableNotifications);
+  prefsForm.addEventListener('submit', onPrefsSubmit);
+  prefsDialog.addEventListener('click', (e) => {
+    // Click on backdrop = outside the form rect = close.
+    const rect = prefsForm.getBoundingClientRect();
+    const inForm =
+      e.clientX >= rect.left && e.clientX <= rect.right &&
+      e.clientY >= rect.top && e.clientY <= rect.bottom;
+    if (!inForm) prefsDialog.close();
+  });
 }
 
 async function getCurrentSubscription() {
@@ -60,33 +121,50 @@ async function refreshNotifyButton() {
     const sub = await getCurrentSubscription();
     const enabled = !!sub && Notification.permission === 'granted';
     notifyBtn.classList.toggle('on', enabled);
-    notifyBtn.title = enabled ? 'Disable notifications' : 'Enable notifications';
+    notifyBtn.title = enabled ? 'Notification settings' : 'Enable notifications';
     notifyBtn.setAttribute(
       'aria-label',
-      enabled ? 'Disable notifications' : 'Enable notifications'
+      enabled ? 'Notification settings' : 'Enable notifications'
     );
   } catch {}
 }
 
-async function toggleNotifications() {
+async function openPrefsDialog() {
+  const existing = await getCurrentSubscription();
+  const subscribed = !!existing && Notification.permission === 'granted';
+  writePrefsToForm(loadPrefs());
+  setPrefsStatus('');
+  prefsSaveBtn.textContent = subscribed ? 'Save' : 'Enable';
+  prefsSub.textContent = subscribed
+    ? 'Adjust which moments push to your phone.'
+    : 'Pick the moments you want to hear about.';
+  prefsDisableBtn.hidden = !subscribed;
+  if (typeof prefsDialog.showModal === 'function') prefsDialog.showModal();
+  else prefsDialog.setAttribute('open', '');
+}
+
+async function onPrefsSubmit(e) {
+  e.preventDefault();
+  const prefs = readPrefsFromForm();
+  prefsSaveBtn.disabled = true;
+  setPrefsStatus('Saving…');
   try {
     const existing = await getCurrentSubscription();
-    if (existing) {
-      await fetch(`${PUSH_API}/unsubscribe`, {
+    if (existing && Notification.permission === 'granted') {
+      const res = await fetch(`${PUSH_API}/prefs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ endpoint: existing.endpoint }),
-      }).catch(() => {});
-      await existing.unsubscribe();
-      setStatus('Notifications off');
+        body: JSON.stringify({ endpoint: existing.endpoint, prefs }),
+      });
+      if (!res.ok) throw new Error('prefs update failed: ' + res.status);
     } else {
       if (Notification.permission === 'denied') {
-        setStatus('Allow notifications in your browser settings.');
+        setPrefsStatus('Notifications are blocked in your browser settings.', true);
         return;
       }
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
-        setStatus('Notifications not enabled.');
+        setPrefsStatus('Notifications not enabled.', true);
         return;
       }
       const reg = await navigator.serviceWorker.ready;
@@ -97,16 +175,45 @@ async function toggleNotifications() {
       const res = await fetch(`${PUSH_API}/subscribe`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ subscription: sub.toJSON() }),
+        body: JSON.stringify({ subscription: sub.toJSON(), prefs }),
       });
       if (!res.ok) throw new Error('subscribe failed: ' + res.status);
-      setStatus('Notifications on');
     }
+    savePrefs(prefs);
     refreshNotifyButton();
-    setTimeout(() => setStatus(''), 2500);
+    setStatus('Notifications saved');
+    setTimeout(() => setStatus(''), 2000);
+    prefsDialog.close();
   } catch (err) {
     console.error(err);
-    setStatus('Could not change notifications');
+    setPrefsStatus('Could not save. Please try again.', true);
+  } finally {
+    prefsSaveBtn.disabled = false;
+  }
+}
+
+async function disableNotifications() {
+  prefsDisableBtn.disabled = true;
+  setPrefsStatus('Disabling…');
+  try {
+    const existing = await getCurrentSubscription();
+    if (existing) {
+      await fetch(`${PUSH_API}/unsubscribe`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      }).catch(() => {});
+      await existing.unsubscribe();
+    }
+    refreshNotifyButton();
+    setStatus('Notifications off');
+    setTimeout(() => setStatus(''), 2000);
+    prefsDialog.close();
+  } catch (err) {
+    console.error(err);
+    setPrefsStatus('Could not turn off notifications.', true);
+  } finally {
+    prefsDisableBtn.disabled = false;
   }
 }
 

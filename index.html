@@ -48,6 +48,58 @@
 
   <main id="matches" class="matches"></main>
 
+  <dialog id="prefs-dialog" class="prefs-dialog" aria-labelledby="prefs-title">
+    <form method="dialog" id="prefs-form">
+      <h2 id="prefs-title">Notifications</h2>
+      <p class="prefs-sub" id="prefs-sub">Pick the moments you want to hear about.</p>
+      <ul class="prefs-list">
+        <li>
+          <label>
+            <span>
+              <strong>Pre-game</strong>
+              <small>30 minutes before kickoff</small>
+            </span>
+            <input type="checkbox" name="preGame" data-key="preGame" />
+          </label>
+        </li>
+        <li>
+          <label>
+            <span>
+              <strong>Game starting</strong>
+              <small>The moment kickoff happens</small>
+            </span>
+            <input type="checkbox" name="kickoff" data-key="kickoff" />
+          </label>
+        </li>
+        <li>
+          <label>
+            <span>
+              <strong>Goal</strong>
+              <small>Every time the score changes</small>
+            </span>
+            <input type="checkbox" name="goal" data-key="goal" />
+          </label>
+        </li>
+        <li>
+          <label>
+            <span>
+              <strong>Game ended</strong>
+              <small>Full time, with the final score</small>
+            </span>
+            <input type="checkbox" name="final" data-key="final" />
+          </label>
+        </li>
+      </ul>
+      <p class="prefs-status" id="prefs-status" aria-live="polite"></p>
+      <menu class="prefs-actions">
+        <button type="button" id="prefs-disable" class="ghost-btn" hidden>Turn off all</button>
+        <span class="spacer"></span>
+        <button type="button" id="prefs-cancel" class="ghost-btn">Cancel</button>
+        <button type="submit" id="prefs-save" class="primary-btn">Enable</button>
+      </menu>
+    </form>
+  </dialog>
+
   <footer class="app-footer">
     <span>Data: ESPN</span>
     <span id="updated"></span>

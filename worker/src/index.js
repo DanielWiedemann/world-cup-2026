@@ -1,19 +1,55 @@
 // World Cup 2026 push notification Worker.
 //
 // HTTP endpoints (CORS-enabled for ALLOWED_ORIGIN):
-//   POST /subscribe   { subscription: PushSubscription }
+//   POST /subscribe   { subscription: PushSubscription, prefs?: Prefs }
+//   POST /prefs       { endpoint, prefs }      — updates prefs on existing sub
 //   POST /unsubscribe { endpoint }
 //   GET  /health
 //
 // Cron handler (every minute):
 //   - Poll ESPN scoreboard for the active tournament window.
-//   - Diff each event against KV state.
-//   - Fan out push for kickoff / goal / final whistle.
+//   - Pre-game: ~30 min before kickoff (idempotent via pregame:<id> marker).
+//   - Diff each event against KV state: kickoff / goal / final whistle.
+//   - Fan out to each subscriber whose prefs include the event type.
 
 import webpush from 'web-push';
 
 const ESPN_BASE =
   'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard';
+
+const PREGAME_MIN_MS = 25 * 60 * 1000;
+const PREGAME_MAX_MS = 35 * 60 * 1000;
+
+function defaultPrefs() {
+  return { preGame: true, kickoff: true, goal: true, final: true };
+}
+
+function sanitizePrefs(p) {
+  const def = defaultPrefs();
+  if (!p || typeof p !== 'object') return def;
+  return {
+    preGame: typeof p.preGame === 'boolean' ? p.preGame : def.preGame,
+    kickoff: typeof p.kickoff === 'boolean' ? p.kickoff : def.kickoff,
+    goal: typeof p.goal === 'boolean' ? p.goal : def.goal,
+    final: typeof p.final === 'boolean' ? p.final : def.final,
+  };
+}
+
+// Older subs were stored as the raw PushSubscription; new ones are
+// `{ subscription, prefs }`. Coerce on read so the rest of the code
+// can treat both the same.
+function parseSubscriberRecord(raw) {
+  if (!raw) return null;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (parsed && parsed.subscription && parsed.subscription.endpoint) {
+    return { subscription: parsed.subscription, prefs: sanitizePrefs(parsed.prefs) };
+  }
+  if (parsed && parsed.endpoint && parsed.keys) {
+    return { subscription: parsed, prefs: defaultPrefs() };
+  }
+  return null;
+}
 
 export default {
   async fetch(request, env) {
@@ -30,6 +66,9 @@ export default {
       }
       if (url.pathname === '/subscribe' && request.method === 'POST') {
         return await handleSubscribe(request, env, cors);
+      }
+      if (url.pathname === '/prefs' && request.method === 'POST') {
+        return await handlePrefs(request, env, cors);
       }
       if (url.pathname === '/unsubscribe' && request.method === 'POST') {
         return await handleUnsubscribe(request, env, cors);
@@ -57,12 +96,23 @@ async function handleSubscribe(request, env, cors) {
   if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
     return json({ error: 'invalid subscription' }, cors, 400);
   }
-  if (!isInWindow()) {
-    // Still accept; tournament window guard is for cron only.
-  }
+  const prefs = sanitizePrefs(body.prefs);
   const key = 'sub:' + (await hash(sub.endpoint));
-  await env.STATE.put(key, JSON.stringify(sub));
-  return json({ ok: true }, cors);
+  await env.STATE.put(key, JSON.stringify({ subscription: sub, prefs }));
+  return json({ ok: true, prefs }, cors);
+}
+
+async function handlePrefs(request, env, cors) {
+  const body = await request.json().catch(() => null);
+  const endpoint = body && body.endpoint;
+  if (!endpoint) return json({ error: 'missing endpoint' }, cors, 400);
+  const key = 'sub:' + (await hash(endpoint));
+  const raw = await env.STATE.get(key);
+  const rec = parseSubscriberRecord(raw);
+  if (!rec) return json({ error: 'unknown subscription' }, cors, 404);
+  rec.prefs = sanitizePrefs(body.prefs);
+  await env.STATE.put(key, JSON.stringify(rec));
+  return json({ ok: true, prefs: rec.prefs }, cors);
 }
 
 async function handleUnsubscribe(request, env, cors) {
@@ -80,14 +130,16 @@ async function handleTestPush(request, env, cors) {
     return json({ error: 'unauthorized' }, cors, 401);
   }
   webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
-  const subs = await listSubscriptions(env);
+  const subs = await listSubscribers(env); // test ignores prefs
   const payload = JSON.stringify({
     type: 'test',
     title: 'Test notification',
     body: 'Web Push is wired up correctly. ⚽',
     url: '/',
   });
-  const results = await Promise.allSettled(subs.map((s) => sendOne(env, s, payload)));
+  const results = await Promise.allSettled(
+    subs.map((s) => sendOne(env, s.name, s.subscription, payload))
+  );
   return json({ sent: subs.length, settled: results.length }, cors);
 }
 
@@ -129,6 +181,27 @@ async function runTick(env) {
 
   // Diff against KV, accumulate notifications.
   const notifications = [];
+
+  // (a) Pre-game window — scheduled matches within ~30 min of kickoff.
+  const now = Date.now();
+  for (const ev of fresh) {
+    if (ev.state !== 'pre' || !ev.date) continue;
+    const ms = new Date(ev.date).getTime() - now;
+    if (ms < PREGAME_MIN_MS || ms > PREGAME_MAX_MS) continue;
+    const marker = 'pregame:' + ev.id;
+    if (await env.STATE.get(marker)) continue;
+    notifications.push({
+      type: 'preGame',
+      eventId: ev.id,
+      title: `Starts in ~30 min: ${ev.name}`,
+      body: `${ev.homeName} vs ${ev.awayName}`,
+      url: '/',
+    });
+    // Marker expires shortly after kickoff — 1 hour is plenty.
+    await env.STATE.put(marker, '1', { expirationTtl: 60 * 60 });
+  }
+
+  // (b) State-change diffs — kickoff / goal / final.
   for (const ev of fresh) {
     const prevRaw = await env.STATE.get('event:' + ev.id);
     const prev = prevRaw ? JSON.parse(prevRaw) : null;
@@ -147,43 +220,44 @@ async function runTick(env) {
 
   if (!notifications.length) return;
 
-  // Load all subscriptions.
-  const subs = await listSubscriptions(env);
+  const subs = await listSubscribers(env);
   if (!subs.length) return;
 
-  // Fan out: one push per (notification × subscription).
+  // Fan out: each subscriber only receives notifications they opted into.
   const tasks = [];
   for (const n of notifications) {
     const payload = JSON.stringify(n);
-    for (const sub of subs) tasks.push(sendOne(env, sub, payload));
+    for (const s of subs) {
+      if (!s.prefs[n.type]) continue;
+      tasks.push(sendOne(env, s.name, s.subscription, payload));
+    }
   }
   await Promise.allSettled(tasks);
 }
 
-async function sendOne(env, sub, payload) {
+async function sendOne(env, key, subscription, payload) {
   try {
-    await webpush.sendNotification(sub.value, payload);
+    await webpush.sendNotification(subscription, payload);
   } catch (err) {
     if (err && (err.statusCode === 404 || err.statusCode === 410)) {
       // Subscription is dead — clean it up.
-      await env.STATE.delete(sub.name);
+      await env.STATE.delete(key);
     } else {
       console.warn('push failed', err && err.statusCode, err && err.body);
     }
   }
 }
 
-async function listSubscriptions(env) {
+async function listSubscribers(env) {
   const out = [];
   let cursor;
   do {
     const page = await env.STATE.list({ prefix: 'sub:', cursor });
     for (const k of page.keys) {
       const raw = await env.STATE.get(k.name);
-      if (!raw) continue;
-      try {
-        out.push({ name: k.name, value: JSON.parse(raw) });
-      } catch {}
+      const rec = parseSubscriberRecord(raw);
+      if (!rec) continue;
+      out.push({ name: k.name, subscription: rec.subscription, prefs: rec.prefs });
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
@@ -253,6 +327,7 @@ function normalizeEvent(ev) {
   return {
     id: ev.id,
     name: ev.name,
+    date: ev.date, // ISO UTC kickoff
     state: status.state || 'pre',
     minute: status.shortDetail || '',
     homeName: home.team.displayName,
