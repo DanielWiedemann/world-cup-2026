@@ -34,6 +34,9 @@ export default {
       if (url.pathname === '/unsubscribe' && request.method === 'POST') {
         return await handleUnsubscribe(request, env, cors);
       }
+      if (url.pathname === '/admin/test-push' && request.method === 'POST') {
+        return await handleTestPush(request, env, cors);
+      }
       return json({ error: 'not found' }, cors, 404);
     } catch (err) {
       console.error('fetch error', err);
@@ -69,6 +72,23 @@ async function handleUnsubscribe(request, env, cors) {
   const key = 'sub:' + (await hash(endpoint));
   await env.STATE.delete(key);
   return json({ ok: true }, cors);
+}
+
+async function handleTestPush(request, env, cors) {
+  const auth = request.headers.get('authorization') || '';
+  if (auth !== `Bearer ${env.ADMIN_TOKEN || ''}` || !env.ADMIN_TOKEN) {
+    return json({ error: 'unauthorized' }, cors, 401);
+  }
+  webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+  const subs = await listSubscriptions(env);
+  const payload = JSON.stringify({
+    type: 'test',
+    title: 'Test notification',
+    body: 'Web Push is wired up correctly. ⚽',
+    url: '/',
+  });
+  const results = await Promise.allSettled(subs.map((s) => sendOne(env, s, payload)));
+  return json({ sent: subs.length, settled: results.length }, cors);
 }
 
 // --- Cron tick ------------------------------------------------------------

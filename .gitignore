@@ -17,6 +17,7 @@ www/
 # Cloudflare Worker
 worker/.wrangler/
 worker/.dev.vars
+worker/.admin-token
 worker/dist/
 
 # Local
