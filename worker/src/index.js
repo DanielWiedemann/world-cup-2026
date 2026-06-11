@@ -12,7 +12,19 @@
 //   - Diff each event against KV state: kickoff / goal / final whistle.
 //   - Fan out to each subscriber whose prefs include the event type.
 
-import webpush from 'web-push';
+// Web Push delivery via @block65/webcrypto-web-push (pure Web Crypto API).
+// We can't use the `web-push` npm package on Cloudflare Workers because it
+// depends on Node's crypto.createECDH, which the unenv polyfill exposes via
+// nodejs_compat as "not implemented" — every send would throw silently.
+import { buildPushPayload } from '@block65/webcrypto-web-push';
+
+function vapidKeys(env) {
+  return {
+    subject: env.VAPID_SUBJECT,
+    publicKey: env.VAPID_PUBLIC_KEY,
+    privateKey: env.VAPID_PRIVATE_KEY,
+  };
+}
 
 const ESPN_BASE =
   'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard';
@@ -129,18 +141,18 @@ async function handleTestPush(request, env, cors) {
   if (auth !== `Bearer ${env.ADMIN_TOKEN || ''}` || !env.ADMIN_TOKEN) {
     return json({ error: 'unauthorized' }, cors, 401);
   }
-  webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
   const subs = await listSubscribers(env); // test ignores prefs
-  const payload = JSON.stringify({
+  const notification = {
     type: 'test',
     title: 'Test notification',
     body: 'Web Push is wired up correctly. ⚽',
     url: '/',
-  });
+  };
   const results = await Promise.allSettled(
-    subs.map((s) => sendOne(env, s.name, s.subscription, payload))
+    subs.map((s) => sendOne(env, s.name, s.subscription, notification))
   );
-  return json({ sent: subs.length, settled: results.length }, cors);
+  const ok = results.filter((r) => r.status === 'fulfilled' && r.value === 'ok').length;
+  return json({ sent: subs.length, ok, failed: subs.length - ok }, cors);
 }
 
 // --- Cron tick ------------------------------------------------------------
@@ -148,12 +160,6 @@ async function handleTestPush(request, env, cors) {
 async function runTick(env) {
   // Cheap guard: outside the tournament window, do nothing.
   if (!isInWindow(env)) return;
-
-  webpush.setVapidDetails(
-    env.VAPID_SUBJECT,
-    env.VAPID_PUBLIC_KEY,
-    env.VAPID_PRIVATE_KEY
-  );
 
   // Pull today (UTC) and tomorrow (UTC) — covers any live match.
   const today = new Date();
@@ -220,31 +226,56 @@ async function runTick(env) {
 
   if (!notifications.length) return;
 
+  console.log(`tick: ${notifications.length} notification(s):`,
+    notifications.map((n) => `${n.type}:${n.eventId}`).join(', '));
+
   const subs = await listSubscribers(env);
-  if (!subs.length) return;
+  if (!subs.length) {
+    console.log('tick: no subscribers, dropping');
+    return;
+  }
 
   // Fan out: each subscriber only receives notifications they opted into.
   const tasks = [];
   for (const n of notifications) {
-    const payload = JSON.stringify(n);
     for (const s of subs) {
       if (!s.prefs[n.type]) continue;
-      tasks.push(sendOne(env, s.name, s.subscription, payload));
+      tasks.push(sendOne(env, s.name, s.subscription, n));
     }
   }
-  await Promise.allSettled(tasks);
+  const results = await Promise.allSettled(tasks);
+  const ok = results.filter((r) => r.status === 'fulfilled' && r.value === 'ok').length;
+  const fail = results.length - ok;
+  console.log(`tick: delivered ${ok}/${results.length} (${fail} failed)`);
 }
 
-async function sendOne(env, key, subscription, payload) {
+async function sendOne(env, key, subscription, notification) {
   try {
-    await webpush.sendNotification(subscription, payload);
-  } catch (err) {
-    if (err && (err.statusCode === 404 || err.statusCode === 410)) {
-      // Subscription is dead — clean it up.
+    const { method, headers, body } = await buildPushPayload(
+      { data: notification, options: { ttl: 24 * 60 * 60, urgency: 'high' } },
+      subscription,
+      vapidKeys(env)
+    );
+    const res = await fetch(subscription.endpoint, { method, headers, body });
+    if (res.status === 201 || res.status === 204) return 'ok';
+    if (res.status === 404 || res.status === 410) {
       await env.STATE.delete(key);
-    } else {
-      console.warn('push failed', err && err.statusCode, err && err.body);
+      console.warn(`push gone (${res.status}) — pruned ${key}`);
+      return 'fail';
     }
+    const errBody = await res.text().catch(() => '');
+    console.warn(`push failed ${res.status} for ${key}: ${errBody.slice(0, 200)}`);
+    return 'fail';
+  } catch (err) {
+    console.warn(
+      `push throw for ${key}:`,
+      JSON.stringify({
+        name: err && err.name,
+        message: err && err.message,
+        stack: err && err.stack && err.stack.split('\n').slice(0, 3).join(' | '),
+      })
+    );
+    return 'fail';
   }
 }
 
