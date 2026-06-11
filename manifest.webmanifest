@@ -1,7 +1,7 @@
 {
-  "name": "World Cup 2026",
+  "name": "World Cup Schedule",
   "short_name": "World Cup",
-  "description": "Upcoming FIFA World Cup 2026 matches in your local timezone.",
+  "description": "FIFA World Cup 2026 schedule in your local timezone.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
