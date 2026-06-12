@@ -1,10 +1,11 @@
-const CACHE = 'wc2026-v12';
+const CACHE = 'wc2026-v13';
 const SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.webmanifest',
+  './photos.json',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];

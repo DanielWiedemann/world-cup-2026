@@ -30,6 +30,40 @@ const STATS_BASE =
 const STATS_CACHE_KEY = 'wc2026.stats.v1';
 const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours; live matches force refresh
 
+// Map ESPN team abbreviations to the Guardian team names that key photos.json.
+const ABBR_TO_GUARDIAN = {
+  ALG: 'Algeria', ARG: 'Argentina', AUS: 'Australia', AUT: 'Austria',
+  BEL: 'Belgium', BIH: 'Bosnia and Herzegovina', BRA: 'Brazil', CAN: 'Canada',
+  CPV: 'Cape Verde', COL: 'Colombia', COD: 'DR Congo', CRO: 'Croatia',
+  CUW: 'Curaçao', CZE: 'Czechia', ECU: 'Ecuador', EGY: 'Egypt',
+  ENG: 'England', FRA: 'France', GER: 'Germany', GHA: 'Ghana',
+  HAI: 'Haiti', IRN: 'Iran', IRQ: 'Iraq', CIV: "Côte d'Ivoire",
+  JPN: 'Japan', JOR: 'Jordan', MEX: 'Mexico', MAR: 'Morocco',
+  NED: 'Netherlands', NZL: 'New Zealand', NOR: 'Norway', PAN: 'Panama',
+  PAR: 'Paraguay', POR: 'Portugal', QAT: 'Qatar', KSA: 'Saudi Arabia',
+  SCO: 'Scotland', SEN: 'Senegal', RSA: 'South Africa', KOR: 'South Korea',
+  ESP: 'Spain', SWE: 'Sweden', SUI: 'Switzerland', TUN: 'Tunisia',
+  TUR: 'Turkey', USA: 'USA', URU: 'Uruguay', UZB: 'Uzbekistan',
+};
+let photoDb = null;
+let photoDbPromise = null;
+async function ensurePhotoDb() {
+  if (photoDb) return photoDb;
+  if (!photoDbPromise) {
+    photoDbPromise = fetch('photos.json')
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((db) => (photoDb = db || {}))
+      .catch(() => (photoDb = {}));
+  }
+  return photoDbPromise;
+}
+function photoFor(teamAbbr, jersey) {
+  if (!photoDb || !teamAbbr || !jersey) return '';
+  const guardianTeam = ABBR_TO_GUARDIAN[teamAbbr];
+  if (!guardianTeam) return '';
+  return photoDb[guardianTeam]?.[String(jersey)]?.photo || '';
+}
+
 let state = {
   events: [],
   filter: 'upcoming',
@@ -679,49 +713,115 @@ function renderStats(e) {
     return `<div class="stats empty">${escapeHtml(entry.error)}</div>`;
   }
   const hasRows = entry.rows && entry.rows.length;
-  const hasGoals = entry.goals && entry.goals.length;
+  const hasTimeline = entry.timeline && entry.timeline.length;
   const hasLineups = entry.lineups && entry.lineups.home;
-  if (!hasRows && !hasGoals && !hasLineups) {
+  if (!hasRows && !hasTimeline && !hasLineups) {
     return `<div class="stats empty">No stats available yet.</div>`;
   }
   return `
     <div class="stats">
-      ${hasGoals ? renderGoals(e, entry.goals) : ''}
+      ${hasTimeline ? renderTimeline(e, entry.timeline, entry.lineups) : ''}
       ${hasRows ? renderStatsTable(e, entry.rows) : ''}
       ${hasLineups ? renderLineups(e, entry.lineups) : ''}
     </div>
   `;
 }
 
-function renderGoals(e, goals) {
+const TIMELINE_GLYPH = {
+  'goal': '⚽',
+  'own-goal': '⚽',
+  'penalty-goal': '⚽',
+  'yellow-card': '<span class="card yellow"></span>',
+  'red-card': '<span class="card red"></span>',
+};
+
+function timelineSide(entry, e) {
+  // Match by displayName first; fall back to abbreviation if names mismatch
+  // across data sources.
+  const home = e.home?.name;
+  const away = e.away?.name;
+  if (entry.teamName === home) return 'home';
+  if (entry.teamName === away) return 'away';
+  // Loose fallback: substring contains.
+  if (home && entry.teamName && home.includes(entry.teamName)) return 'home';
+  if (away && entry.teamName && away.includes(entry.teamName)) return 'away';
+  return 'home';
+}
+
+function findRosterPlayer(lineups, side, athleteId, name) {
+  const team = lineups?.[side];
+  if (!team) return null;
+  const all = [...(team.starters || []), ...(team.bench || [])];
+  if (athleteId) {
+    const byId = all.find((p) => String(p.id) === String(athleteId));
+    if (byId) return byId;
+  }
+  if (name) {
+    const byName = all.find(
+      (p) => p.fullName === name || p.name === name
+    );
+    if (byName) return byName;
+  }
+  return null;
+}
+
+function playerBadge(rosterPlayer, abbr) {
+  // Photo from Guardian (by team abbr + jersey), or ESPN headshot, or jersey
+  // number in a circle.
+  const jersey = rosterPlayer?.jersey || '';
+  const photo = photoFor(abbr, jersey) || rosterPlayer?.headshot || '';
+  if (photo) {
+    return `<span class="tl-badge photo"><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`;
+  }
+  if (jersey) {
+    return `<span class="tl-badge num">${escapeHtml(jersey)}</span>`;
+  }
+  return `<span class="tl-badge num">?</span>`;
+}
+
+function renderTimeline(e, timeline, lineups) {
+  if (!timeline.length) return '';
   const homeAbbr = e.home?.abbr;
-  const items = goals
-    .map((g) => {
-      const onHome = g.teamAbbr && homeAbbr && g.teamAbbr === homeAbbr;
-      const teamLogo =
-        onHome ? e.home?.logo : e.away?.logo;
-      const logoHtml = teamLogo
-        ? `<img class="goal-logo" src="${escapeHtml(teamLogo)}" alt="" loading="lazy" />`
-        : `<span class="goal-logo placeholder">${escapeHtml((g.teamAbbr || '?').slice(0, 3))}</span>`;
-      const annot = g.isOwn ? ' (OG)' : g.isPenalty ? ' (P)' : '';
-      const assistHtml = g.assist
-        ? `<span class="goal-assist">assist ${escapeHtml(g.assist)}</span>`
-        : '';
-      return `
-        <li class="goal-item ${onHome ? 'home' : 'away'}">
-          <span class="goal-minute">${escapeHtml(g.minute || "—'")}</span>
-          ${logoHtml}
-          <span class="goal-text">
-            <span class="goal-scorer">${escapeHtml(g.scorer)}${escapeHtml(annot)}</span>
-            ${assistHtml}
-          </span>
-        </li>`;
-    })
-    .join('');
+  const awayAbbr = e.away?.abbr;
+  const homeItems = [];
+  const awayItems = [];
+  for (const t of timeline) {
+    const side = timelineSide(t, e);
+    const abbr = side === 'home' ? homeAbbr : awayAbbr;
+    const rosterPlayer = findRosterPlayer(lineups, side, t.athleteId, t.player);
+    const badge = playerBadge(rosterPlayer, abbr);
+    const glyph = TIMELINE_GLYPH[t.kind] || '';
+    const annot = t.kind === 'own-goal' ? ' (OG)' : t.kind === 'penalty-goal' ? ' (P)' : '';
+    const assistHtml = t.assist
+      ? `<span class="tl-assist">assist ${escapeHtml(t.assist)}</span>`
+      : '';
+    const minute = escapeHtml(t.minute || "—'");
+    const html = side === 'home'
+      ? `<li class="tl-row home">
+           ${badge}
+           <div class="tl-text">
+             <div class="tl-name">${escapeHtml(t.player)}${escapeHtml(annot)} <span class="tl-glyph">${glyph}</span></div>
+             ${assistHtml}
+           </div>
+           <span class="tl-minute">${minute}</span>
+         </li>`
+      : `<li class="tl-row away">
+           <span class="tl-minute">${minute}</span>
+           <div class="tl-text">
+             <div class="tl-name"><span class="tl-glyph">${glyph}</span> ${escapeHtml(t.player)}${escapeHtml(annot)}</div>
+             ${assistHtml}
+           </div>
+           ${badge}
+         </li>`;
+    (side === 'home' ? homeItems : awayItems).push(html);
+  }
   return `
     <div class="stats-section">
-      <h3 class="stats-section-title">Goals</h3>
-      <ul class="goals-list">${items}</ul>
+      <h3 class="stats-section-title">Timeline</h3>
+      <div class="timeline">
+        <ul class="tl-col tl-home">${homeItems.join('')}</ul>
+        <ul class="tl-col tl-away">${awayItems.join('')}</ul>
+      </div>
     </div>
   `;
 }
@@ -768,19 +868,51 @@ function renderLineups(e, lineups) {
   `;
 }
 
+function arrangePitchRows(starters, formation) {
+  // Bucket starters by position group from their ESPN position abbr.
+  const groups = { GK: [], DEF: [], MID: [], FWD: [] };
+  for (const p of starters) {
+    const pos = (p.pos || '').toUpperCase();
+    if (pos === 'G' || pos === 'GK') groups.GK.push(p);
+    else if (/^(D|CB|CD|RB|LB|RWB|LWB)/.test(pos)) groups.DEF.push(p);
+    else if (/^(F|ST|CF|RF|LF|RW|LW)/.test(pos)) groups.FWD.push(p);
+    else groups.MID.push(p);
+  }
+  // Sort each row by directional cue: L (left) → C (center) → R (right).
+  const dirRank = (p) => {
+    const pos = (p.pos || '').toUpperCase();
+    if (/-L$|L$|LB|LW|LM/.test(pos)) return 0;
+    if (/-R$|R$|RB|RW|RM/.test(pos)) return 2;
+    return 1;
+  };
+  for (const k of Object.keys(groups)) {
+    groups[k].sort((a, b) => dirRank(a) - dirRank(b));
+  }
+  // Build rows back-to-front: GK → DEF → MID → FWD.
+  // If the formation suggests 4 outfield rows (e.g. "4-1-4-1"), split the MID
+  // pool into two rows by its declared sizes.
+  const digits = (formation || '').split('-').map((n) => parseInt(n, 10)).filter(Number.isFinite);
+  let midRows = [groups.MID];
+  if (digits.length === 4 && groups.MID.length === digits[1] + digits[2]) {
+    midRows = [groups.MID.slice(0, digits[1]), groups.MID.slice(digits[1])];
+  }
+  const rows = [groups.GK, groups.DEF, ...midRows, groups.FWD].filter((r) => r.length);
+  return rows;
+}
+
 function renderTeamLineup(team, eventTeam) {
   const teamLogo = eventTeam?.logo
     ? `<img class="lineup-team-logo" src="${escapeHtml(eventTeam.logo)}" alt="" loading="lazy" />`
     : '';
-  const players = team.starters
-    .map((p) => `
-      <li class="lineup-player">
-        ${p.headshot
-          ? `<img class="lineup-photo" src="${escapeHtml(p.headshot)}" alt="" loading="lazy" />`
-          : `<span class="lineup-photo placeholder">${escapeHtml(p.jersey || initialsOf(p.name))}</span>`}
-        <span class="lineup-name">${escapeHtml(p.name)}</span>
-        ${p.pos ? `<span class="lineup-pos">${escapeHtml(p.pos)}</span>` : ''}
-      </li>`)
+  const abbr = eventTeam?.abbr || team.teamAbbr;
+  const rows = arrangePitchRows(team.starters, team.formation);
+  const rowsHtml = rows
+    .map(
+      (rowPlayers) => `
+      <div class="pitch-row" style="--n:${rowPlayers.length}">
+        ${rowPlayers.map((p) => renderPitchPlayer(p, abbr)).join('')}
+      </div>`
+    )
     .join('');
   return `
     <div class="lineup-team">
@@ -789,7 +921,23 @@ function renderTeamLineup(team, eventTeam) {
         <span class="lineup-team-name">${escapeHtml(team.teamName || '')}</span>
         ${team.formation ? `<span class="lineup-formation">${escapeHtml(team.formation)}</span>` : ''}
       </div>
-      <ul class="lineup-players">${players}</ul>
+      <div class="pitch">
+        <div class="pitch-lines" aria-hidden="true"></div>
+        ${rowsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderPitchPlayer(p, abbr) {
+  const photo = photoFor(abbr, p.jersey) || p.headshot || '';
+  const badge = photo
+    ? `<span class="pp-badge photo"><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`
+    : `<span class="pp-badge num">${escapeHtml(p.jersey || initialsOf(p.name))}</span>`;
+  return `
+    <div class="pitch-player">
+      ${badge}
+      <span class="pp-name">${escapeHtml(p.name)}</span>
     </div>
   `;
 }
@@ -845,9 +993,9 @@ async function ensureStats(eventId) {
     if (!res.ok) throw new Error('ESPN ' + res.status);
     const data = await res.json();
     const rows = extractStatRows(data);
-    const goals = extractGoals(data);
+    const timeline = extractTimeline(data);
     const lineups = extractLineups(data);
-    state.stats[eventId] = { rows, goals, lineups, fetchedAt: Date.now() };
+    state.stats[eventId] = { rows, timeline, lineups, fetchedAt: Date.now() };
     saveStatsCache();
     if (state.expanded.has(eventId)) render();
   } catch (err) {
@@ -876,26 +1024,43 @@ function extractStatRows(data) {
   return rows;
 }
 
-function extractGoals(data) {
-  const details = data?.header?.competitions?.[0]?.details || [];
-  const goals = [];
-  for (const p of details) {
-    if (!p || !p.scoringPlay) continue;
-    const scorer = p.participants?.[0]?.athlete;
-    const assist = p.participants?.[1]?.athlete;
-    const typeText = p.type?.text || '';
-    goals.push({
+// Build a unified match timeline from ESPN's keyEvents: goals, cards.
+// Returns [{ kind, minute, clockValue, teamName, athleteId, player, assistId, assist }]
+function extractTimeline(data) {
+  const ke = data?.keyEvents || [];
+  const entries = [];
+  for (const p of ke) {
+    const t = p?.type?.type || '';
+    const text = p?.type?.text || '';
+    let kind = null;
+    if (t === 'goal' || /^goal/i.test(text)) {
+      kind = /own goal/i.test(text)
+        ? 'own-goal'
+        : /penalty/i.test(text) && !/saved|missed/i.test(text)
+        ? 'penalty-goal'
+        : 'goal';
+    } else if (t === 'yellow-card' || /yellow card/i.test(text)) {
+      kind = 'yellow-card';
+    } else if (t === 'red-card' || /red card/i.test(text)) {
+      kind = 'red-card';
+    }
+    if (!kind) continue;
+    const players = p.participants || [];
+    const player = players[0]?.athlete;
+    const assist = players[1]?.athlete;
+    entries.push({
+      kind,
       minute: p.clock?.displayValue || '',
-      teamAbbr: p.team?.abbreviation,
-      scorer: scorer?.shortName || scorer?.displayName || '?',
-      assist: assist?.shortName || assist?.displayName,
-      isPenalty: /penalty/i.test(typeText) && !/saved|missed/i.test(typeText),
-      isOwn: /own goal/i.test(typeText),
+      clockValue: typeof p.clock?.value === 'number' ? p.clock.value : 0,
+      teamName: p.team?.displayName || '',
+      athleteId: player?.id,
+      player: player?.shortName || player?.displayName || '?',
+      assistId: assist?.id,
+      assist: assist ? (assist.shortName || assist.displayName) : undefined,
     });
   }
-  // Sort by clock value (numeric where possible).
-  goals.sort((a, b) => parseInt(a.minute) - parseInt(b.minute));
-  return goals;
+  entries.sort((a, b) => a.clockValue - b.clockValue);
+  return entries;
 }
 
 function extractLineups(data) {
@@ -1063,4 +1228,5 @@ function render() {
   }
 }
 
+ensurePhotoDb();
 load();
