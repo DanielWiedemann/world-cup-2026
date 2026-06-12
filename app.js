@@ -27,7 +27,7 @@ $('#tz-label').textContent = `Times shown in ${tz}`;
 
 const STATS_BASE =
   'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary';
-const STATS_CACHE_KEY = 'wc2026.stats.v1';
+const STATS_CACHE_KEY = 'wc2026.stats.v2';
 const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours; live matches force refresh
 
 // Map ESPN team abbreviations to the Guardian team names that key photos.json.
@@ -733,7 +733,7 @@ function matchCard(e) {
   const badge = live
     ? `<span class="badge live">● Live · ${escapeHtml(e.detail)}</span>`
     : done
-    ? `<span class="badge done">Final</span>`
+    ? `<span class="badge done">FT</span>`
     : '';
   const venue = e.venue
     ? `<div class="venue">${escapeHtml(e.venue)}${e.city ? ', ' + escapeHtml(e.city) : ''}</div>`
@@ -857,9 +857,11 @@ function renderTimeline(e, timeline, lineups) {
       ? `<span class="tl-assist">assist ${escapeHtml(t.assist)}</span>`
       : '';
     const minute = escapeHtml(t.minute || "—'");
+    const isGoal = /goal$/.test(t.kind);
+    const rowCls = `tl-row ${side} ${isGoal ? 'goal' : ''}`;
     if (side === 'home') {
       return `
-        <li class="tl-row home">
+        <li class="${rowCls}">
           <div class="tl-half">
             ${badge}
             <div class="tl-text">
@@ -872,7 +874,7 @@ function renderTimeline(e, timeline, lineups) {
         </li>`;
     }
     return `
-      <li class="tl-row away">
+      <li class="${rowCls}">
         <div class="tl-half">
           <span class="tl-minute">${minute}</span>
           <span class="tl-dots" aria-hidden="true"></span>

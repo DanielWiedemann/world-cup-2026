@@ -354,11 +354,11 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .stats-table th {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  padding: 4px 4px 6px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  padding: 6px 4px 10px;
   font-weight: 700;
 }
 .stats-table th:first-child { text-align: left; }
@@ -378,15 +378,17 @@ html, body {
 .stats-table .stat-val.home { text-align: left; }
 .stats-table .stat-val.away { text-align: right; }
 
-.stats-section { margin-bottom: 14px; }
+.stats-section { margin-bottom: 18px; }
 .stats-section:last-child { margin-bottom: 0; }
 .stats-section-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  margin: 0 0 8px;
+  letter-spacing: 0.18em;
+  color: color-mix(in srgb, var(--accent) 60%, var(--muted));
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 /* Timeline — single chronological list. A vertical axis runs down the
@@ -420,7 +422,27 @@ html, body {
   padding: 8px 0;
   font-size: 13px;
   position: relative;
+  border-radius: 8px;
 }
+/* Goal rows pop with a subtle gold tint + brighter type. */
+.tl-row.goal {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, #ffd45c 16%, transparent) 30%,
+    color-mix(in srgb, #ffd45c 16%, transparent) 70%,
+    transparent 100%);
+}
+.tl-row.goal .tl-name { font-weight: 700; }
+.tl-row.goal .tl-minute {
+  background: linear-gradient(180deg, #ffd45c 0%, #f4a738 100%);
+  color: #2a1a06;
+  border-color: transparent;
+  box-shadow: 0 2px 6px rgba(244, 167, 56, 0.35);
+}
+.tl-row.goal .tl-badge.photo {
+  box-shadow: 0 0 0 2px #ffd45c, 0 0 12px rgba(255, 212, 92, 0.4);
+}
+.tl-row.goal .tl-glyph { font-size: 16px; }
 .tl-half {
   display: flex;
   align-items: center;
