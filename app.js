@@ -936,33 +936,56 @@ function renderLineups(e, lineups) {
   `;
 }
 
+// Classify an ESPN position abbreviation into one of GK/DEF/MID/FWD.
+// Strip the directional suffix first ("CD-L" → "CD") so we can match the
+// base position with an exact whitelist — avoiding the bug where the
+// broad `^D` regex used to catch DM (defensive midfielder) too.
+const DEF_BASE = new Set(['D', 'CB', 'CD', 'RB', 'LB', 'WB', 'RWB', 'LWB']);
+const FWD_BASE = new Set(['F', 'ST', 'CF', 'RF', 'LF', 'RW', 'LW']);
+function positionGroup(pos) {
+  const p = (pos || '').toUpperCase();
+  const base = p.replace(/-[LCR]$/, '');
+  if (base === 'G' || base === 'GK') return 'GK';
+  if (DEF_BASE.has(base)) return 'DEF';
+  if (FWD_BASE.has(base)) return 'FWD';
+  return 'MID'; // M, CM, DM, CDM, AM, CAM, RM, LM, etc.
+}
+
 function arrangePitchRows(starters, formation) {
-  // Bucket starters by position group from their ESPN position abbr.
   const groups = { GK: [], DEF: [], MID: [], FWD: [] };
-  for (const p of starters) {
-    const pos = (p.pos || '').toUpperCase();
-    if (pos === 'G' || pos === 'GK') groups.GK.push(p);
-    else if (/^(D|CB|CD|RB|LB|RWB|LWB)/.test(pos)) groups.DEF.push(p);
-    else if (/^(F|ST|CF|RF|LF|RW|LW)/.test(pos)) groups.FWD.push(p);
-    else groups.MID.push(p);
-  }
-  // Sort each row by directional cue: L (left) → C (center) → R (right).
+  for (const p of starters) groups[positionGroup(p.pos)].push(p);
+
   const dirRank = (p) => {
     const pos = (p.pos || '').toUpperCase();
-    if (/-L$|L$|LB|LW|LM/.test(pos)) return 0;
-    if (/-R$|R$|RB|RW|RM/.test(pos)) return 2;
+    if (/-L$|^L|^WL/.test(pos)) return 0;
+    if (/-R$|^R|^WR/.test(pos)) return 2;
     return 1;
   };
+  // Sort each group by left-to-right directional cue.
   for (const k of Object.keys(groups)) {
     groups[k].sort((a, b) => dirRank(a) - dirRank(b));
   }
-  // Build rows back-to-front: GK → DEF → MID → FWD.
-  // If the formation suggests 4 outfield rows (e.g. "4-1-4-1"), split the MID
-  // pool into two rows by its declared sizes.
+  // Within MID, also sort defensive → central → attacking so 4-digit
+  // formations split into the correct back-row / front-row halves.
+  const midRank = (p) => {
+    const pos = (p.pos || '').toUpperCase();
+    const base = pos.replace(/-[LCR]$/, '');
+    if (base === 'DM' || base === 'CDM') return 0;
+    if (base === 'AM' || base === 'CAM') return 2;
+    return 1;
+  };
+  groups.MID.sort((a, b) => midRank(a) - midRank(b) || dirRank(a) - dirRank(b));
+
+  // Build rows back-to-front: GK → DEF → (MID rows) → FWD.
   const digits = (formation || '').split('-').map((n) => parseInt(n, 10)).filter(Number.isFinite);
   let midRows = [groups.MID];
   if (digits.length === 4 && groups.MID.length === digits[1] + digits[2]) {
     midRows = [groups.MID.slice(0, digits[1]), groups.MID.slice(digits[1])];
+  } else if (digits.length === 4 && groups.MID.length >= 2 && digits[1] >= 1 && digits[2] >= 1) {
+    // Best-effort split when MID count doesn't exactly match (e.g. ESPN
+    // classifies someone differently to the declared formation).
+    const back = Math.max(1, Math.min(groups.MID.length - 1, digits[1]));
+    midRows = [groups.MID.slice(0, back), groups.MID.slice(back)];
   }
   const rows = [groups.GK, groups.DEF, ...midRows, groups.FWD].filter((r) => r.length);
   return rows;
