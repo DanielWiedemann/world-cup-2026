@@ -348,35 +348,70 @@ html, body {
   padding: 14px 0 4px;
   font-style: italic;
 }
-.stats-table {
-  width: 100%;
-  border-collapse: collapse;
+.stats-teams {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding: 0 2px;
+}
+.stats-team-name { color: var(--text); }
+
+.stat-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   font-variant-numeric: tabular-nums;
 }
-.stats-table th {
-  font-size: 13px;
-  text-transform: none;
-  letter-spacing: -0.005em;
-  color: var(--text);
-  padding: 6px 4px 10px;
-  font-weight: 700;
+.stat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
-.stats-table th:first-child { text-align: left; }
-.stats-table th:last-child { text-align: right; }
-.stats-table td {
-  padding: 5px 4px;
-}
-.stats-table .stat-label {
+.stat-label {
   text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
   color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
-.stats-table .stat-val {
-  font-weight: 600;
+.stat-values {
+  display: grid;
+  grid-template-columns: minmax(38px, max-content) 1fr minmax(38px, max-content);
+  gap: 10px;
+  align-items: center;
 }
-.stats-table .stat-val.home { text-align: left; }
-.stats-table .stat-val.away { text-align: right; }
+.stat-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.stat-val.home { text-align: right; }
+.stat-val.away { text-align: left; }
+
+.stat-bar {
+  display: flex;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.stat-bar-fill { transition: width 0.4s ease; }
+.stat-bar-fill.home {
+  background: var(--accent);
+  border-radius: 2px 0 0 2px;
+}
+.stat-bar-fill.away {
+  background: color-mix(in srgb, var(--accent) 35%, var(--surface));
+  border-radius: 0 2px 2px 0;
+}
+/* Winning side's number gets a stronger weight. */
+.stat-row.home .stat-val.home,
+.stat-row.away .stat-val.away { color: var(--accent); }
+.stat-row.home .stat-val.away,
+.stat-row.away .stat-val.home { color: var(--muted); }
 
 .stats-section { margin-bottom: 18px; }
 .stats-section:last-child { margin-bottom: 0; }

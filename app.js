@@ -894,26 +894,48 @@ function renderTimeline(e, timeline, lineups) {
   `;
 }
 
+function parseStatNum(v) {
+  if (v == null) return 0;
+  const n = parseFloat(String(v).replace(/[^\d.\-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
 function renderStatsTable(e, rows) {
   const homeName = e.home?.short || e.home?.name || 'Home';
   const awayName = e.away?.short || e.away?.name || 'Away';
-  const rowsHtml = rows
-    .map(
-      (row) => `
-      <tr>
-        <td class="stat-val home">${escapeHtml(row.home)}</td>
-        <td class="stat-label">${escapeHtml(row.label)}</td>
-        <td class="stat-val away">${escapeHtml(row.away)}</td>
-      </tr>`
-    )
+  const items = rows
+    .map((row) => {
+      const h = parseStatNum(row.home);
+      const a = parseStatNum(row.away);
+      const total = h + a;
+      // Lower-is-better rows (fouls, cards): show proportion as-is but the
+      // colour palette stays neutral. The bar still communicates who has
+      // more of the thing.
+      const hPct = total > 0 ? (h / total) * 100 : 50;
+      const aPct = total > 0 ? (a / total) * 100 : 50;
+      const winSide = h === a ? 'tied' : h > a ? 'home' : 'away';
+      return `
+        <div class="stat-row ${winSide}">
+          <div class="stat-label">${escapeHtml(row.label)}</div>
+          <div class="stat-values">
+            <span class="stat-val home">${escapeHtml(row.home)}</span>
+            <div class="stat-bar" aria-hidden="true">
+              <div class="stat-bar-fill home" style="width:${hPct}%"></div>
+              <div class="stat-bar-fill away" style="width:${aPct}%"></div>
+            </div>
+            <span class="stat-val away">${escapeHtml(row.away)}</span>
+          </div>
+        </div>`;
+    })
     .join('');
   return `
     <div class="stats-section">
       <h3 class="stats-section-title">Statistics</h3>
-      <table class="stats-table">
-        <thead><tr><th>${escapeHtml(homeName)}</th><th></th><th>${escapeHtml(awayName)}</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
+      <div class="stats-teams">
+        <span class="stats-team-name home">${escapeHtml(homeName)}</span>
+        <span class="stats-team-name away">${escapeHtml(awayName)}</span>
+      </div>
+      <div class="stat-rows">${items}</div>
     </div>
   `;
 }
@@ -936,59 +958,81 @@ function renderLineups(e, lineups) {
   `;
 }
 
-// Classify an ESPN position abbreviation into one of GK/DEF/MID/FWD.
-// Strip the directional suffix first ("CD-L" → "CD") so we can match the
-// base position with an exact whitelist — avoiding the bug where the
-// broad `^D` regex used to catch DM (defensive midfielder) too.
+// Strip the directional suffix and return the position base.
+function positionBase(pos) {
+  return (pos || '').toUpperCase().replace(/-[LCR]$/, '');
+}
+// Classify into broad group for fallback bucketing.
 const DEF_BASE = new Set(['D', 'CB', 'CD', 'RB', 'LB', 'WB', 'RWB', 'LWB']);
 const FWD_BASE = new Set(['F', 'ST', 'CF', 'RF', 'LF', 'RW', 'LW']);
 function positionGroup(pos) {
-  const p = (pos || '').toUpperCase();
-  const base = p.replace(/-[LCR]$/, '');
+  const base = positionBase(pos);
   if (base === 'G' || base === 'GK') return 'GK';
   if (DEF_BASE.has(base)) return 'DEF';
   if (FWD_BASE.has(base)) return 'FWD';
-  return 'MID'; // M, CM, DM, CDM, AM, CAM, RM, LM, etc.
+  return 'MID';
+}
+// Defensive-to-attacking rank for slotting by formation digits.
+const POSITION_RANK = {
+  G: 0, GK: 0,
+  D: 10, CB: 10, CD: 10,
+  RB: 11, LB: 11,
+  WB: 15, RWB: 15, LWB: 15,
+  DM: 20, CDM: 20,
+  M: 30, CM: 30,
+  LM: 35, RM: 35,
+  AM: 40, CAM: 40,
+  LW: 50, RW: 50,
+  F: 60, ST: 60, CF: 60, RF: 60, LF: 60,
+};
+function positionRank(pos) {
+  const base = positionBase(pos);
+  return POSITION_RANK[base] ?? 30; // default to central midfielder
+}
+function dirRank(p) {
+  const pos = (p.pos || '').toUpperCase();
+  if (/-L$|^L[^W]?|LW|LB|LM|LF|LWB/.test(pos)) return 0;
+  if (/-R$|^R[^W]?|RW|RB|RM|RF|RWB/.test(pos)) return 2;
+  return 1;
+}
+function sortByDirection(row) {
+  row.sort((a, b) => dirRank(a) - dirRank(b));
 }
 
 function arrangePitchRows(starters, formation) {
+  const digits = (formation || '')
+    .split('-')
+    .map((n) => parseInt(n, 10))
+    .filter(Number.isFinite);
+  const sum = digits.reduce((a, b) => a + b, 0);
+
+  // Preferred strategy: when the formation digits add up to the outfield 10,
+  // sort every outfielder by defensive→attacking rank and slice into the
+  // declared row sizes. This honours formations like 3-4-2-1 where ESPN
+  // labels the two wide attackers as LW/RW (which our bucket regex would
+  // otherwise lump in with the striker).
+  if (digits.length >= 2 && sum === starters.length - 1) {
+    const ranked = [...starters].sort(
+      (a, b) => positionRank(a.pos) - positionRank(b.pos)
+    );
+    const gkIdx = ranked.findIndex((p) => positionGroup(p.pos) === 'GK');
+    const gk = gkIdx >= 0 ? ranked.splice(gkIdx, 1)[0] : ranked.shift();
+    const rows = [[gk]];
+    let i = 0;
+    for (const size of digits) {
+      const row = ranked.slice(i, i + size);
+      sortByDirection(row);
+      rows.push(row);
+      i += size;
+    }
+    return rows;
+  }
+
+  // Fallback: classic group bucketing for unfamiliar formations.
   const groups = { GK: [], DEF: [], MID: [], FWD: [] };
   for (const p of starters) groups[positionGroup(p.pos)].push(p);
-
-  const dirRank = (p) => {
-    const pos = (p.pos || '').toUpperCase();
-    if (/-L$|^L|^WL/.test(pos)) return 0;
-    if (/-R$|^R|^WR/.test(pos)) return 2;
-    return 1;
-  };
-  // Sort each group by left-to-right directional cue.
-  for (const k of Object.keys(groups)) {
-    groups[k].sort((a, b) => dirRank(a) - dirRank(b));
-  }
-  // Within MID, also sort defensive → central → attacking so 4-digit
-  // formations split into the correct back-row / front-row halves.
-  const midRank = (p) => {
-    const pos = (p.pos || '').toUpperCase();
-    const base = pos.replace(/-[LCR]$/, '');
-    if (base === 'DM' || base === 'CDM') return 0;
-    if (base === 'AM' || base === 'CAM') return 2;
-    return 1;
-  };
-  groups.MID.sort((a, b) => midRank(a) - midRank(b) || dirRank(a) - dirRank(b));
-
-  // Build rows back-to-front: GK → DEF → (MID rows) → FWD.
-  const digits = (formation || '').split('-').map((n) => parseInt(n, 10)).filter(Number.isFinite);
-  let midRows = [groups.MID];
-  if (digits.length === 4 && groups.MID.length === digits[1] + digits[2]) {
-    midRows = [groups.MID.slice(0, digits[1]), groups.MID.slice(digits[1])];
-  } else if (digits.length === 4 && groups.MID.length >= 2 && digits[1] >= 1 && digits[2] >= 1) {
-    // Best-effort split when MID count doesn't exactly match (e.g. ESPN
-    // classifies someone differently to the declared formation).
-    const back = Math.max(1, Math.min(groups.MID.length - 1, digits[1]));
-    midRows = [groups.MID.slice(0, back), groups.MID.slice(back)];
-  }
-  const rows = [groups.GK, groups.DEF, ...midRows, groups.FWD].filter((r) => r.length);
-  return rows;
+  for (const k of Object.keys(groups)) sortByDirection(groups[k]);
+  return [groups.GK, groups.DEF, groups.MID, groups.FWD].filter((r) => r.length);
 }
 
 function renderTeamLineup(team, eventTeam) {
