@@ -91,6 +91,13 @@ document.addEventListener('visibilitychange', () => {
 });
 
 matchesEl.addEventListener('click', (e) => {
+  // Player badge → open overlay (timeline or pitch).
+  const badge = e.target.closest('.tl-badge.photo, .pp-badge.photo');
+  if (badge && badge.dataset.playerPhoto) {
+    e.stopPropagation();
+    openPlayerDialog(badge.dataset);
+    return;
+  }
   // Lineups sub-section toggle (independent expand state per event).
   const lineupBtn = e.target.closest('.lineups-toggle');
   if (lineupBtn) {
@@ -110,6 +117,54 @@ matchesEl.addEventListener('click', (e) => {
   else state.expanded.add(id);
   render();
   if (state.expanded.has(id)) ensureStats(id);
+});
+
+const POSITION_LONG = {
+  G: 'Goalkeeper', GK: 'Goalkeeper',
+  D: 'Defender', CD: 'Centre back', CB: 'Centre back',
+  'CD-L': 'Left centre back', 'CD-R': 'Right centre back',
+  LB: 'Left back', RB: 'Right back', LWB: 'Left wing back', RWB: 'Right wing back',
+  M: 'Midfielder', CM: 'Central midfielder', DM: 'Defensive midfielder',
+  AM: 'Attacking midfielder', LM: 'Left midfielder', RM: 'Right midfielder',
+  F: 'Forward', ST: 'Striker', CF: 'Centre forward',
+  LW: 'Left wing', RW: 'Right wing', LF: 'Left forward', RF: 'Right forward',
+};
+
+const playerDialog = $('#player-dialog');
+const playerDialogPhoto = $('#player-dialog-photo');
+const playerDialogName = $('#player-dialog-name');
+const playerDialogMeta = $('#player-dialog-meta');
+const playerDialogClose = $('#player-dialog-close');
+
+function openPlayerDialog(data) {
+  if (!playerDialog) return;
+  playerDialogPhoto.src = data.playerPhoto;
+  playerDialogPhoto.alt = data.playerName || '';
+  playerDialogName.textContent = data.playerName || '';
+  const team = data.playerTeam || '';
+  const pos = POSITION_LONG[data.playerPos] || data.playerPos || '';
+  const jersey = data.playerJersey ? `#${data.playerJersey}` : '';
+  playerDialogMeta.textContent = [team, pos, jersey].filter(Boolean).join(' · ');
+  if (typeof playerDialog.showModal === 'function') playerDialog.showModal();
+}
+
+playerDialogClose?.addEventListener('click', () => playerDialog.close());
+playerDialog?.addEventListener('click', (e) => {
+  // Click outside the dialog content closes it.
+  const rect = playerDialog.getBoundingClientRect();
+  const insideDialog =
+    e.clientX >= rect.left && e.clientX <= rect.right &&
+    e.clientY >= rect.top && e.clientY <= rect.bottom;
+  if (!insideDialog) playerDialog.close();
+});
+// Keyboard accessibility — Enter/Space on a focused badge opens the dialog.
+matchesEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const badge = e.target.closest('.tl-badge.photo, .pp-badge.photo');
+  if (badge && badge.dataset.playerPhoto) {
+    e.preventDefault();
+    openPlayerDialog(badge.dataset);
+  }
 });
 
 // 1-sec tick keeps the seconds counter live when kickoff is under an hour;
@@ -765,13 +820,19 @@ function findRosterPlayer(lineups, side, athleteId, name) {
   return null;
 }
 
-function playerBadge(rosterPlayer, abbr) {
+function playerBadge(rosterPlayer, abbr, displayName) {
   // Photo from Guardian (by team abbr + jersey), or ESPN headshot, or jersey
-  // number in a circle.
+  // number in a circle. The data-* attributes feed the player overlay.
   const jersey = rosterPlayer?.jersey || '';
   const photo = photoFor(abbr, jersey) || rosterPlayer?.headshot || '';
+  const name = displayName || rosterPlayer?.fullName || rosterPlayer?.name || '';
+  const pos = rosterPlayer?.pos || '';
+  const teamName = ABBR_TO_GUARDIAN[abbr] || abbr || '';
+  const dataAttrs = photo
+    ? `data-player-photo="${escapeHtml(photo)}" data-player-name="${escapeHtml(name)}" data-player-team="${escapeHtml(teamName)}" data-player-pos="${escapeHtml(pos)}" data-player-jersey="${escapeHtml(jersey)}" data-player-abbr="${escapeHtml(abbr || '')}" role="button" tabindex="0"`
+    : '';
   if (photo) {
-    return `<span class="tl-badge photo"><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`;
+    return `<span class="tl-badge photo" ${dataAttrs}><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`;
   }
   if (jersey) {
     return `<span class="tl-badge num">${escapeHtml(jersey)}</span>`;
@@ -783,45 +844,50 @@ function renderTimeline(e, timeline, lineups) {
   if (!timeline.length) return '';
   const homeAbbr = e.home?.abbr;
   const awayAbbr = e.away?.abbr;
-  const homeItems = [];
-  const awayItems = [];
-  for (const t of timeline) {
+  // Single chronologically-ordered list; each row alternates side based on
+  // which team the event belongs to.
+  const items = timeline.map((t) => {
     const side = timelineSide(t, e);
     const abbr = side === 'home' ? homeAbbr : awayAbbr;
     const rosterPlayer = findRosterPlayer(lineups, side, t.athleteId, t.player);
-    const badge = playerBadge(rosterPlayer, abbr);
+    const badge = playerBadge(rosterPlayer, abbr, t.player);
     const glyph = TIMELINE_GLYPH[t.kind] || '';
     const annot = t.kind === 'own-goal' ? ' (OG)' : t.kind === 'penalty-goal' ? ' (P)' : '';
     const assistHtml = t.assist
       ? `<span class="tl-assist">assist ${escapeHtml(t.assist)}</span>`
       : '';
     const minute = escapeHtml(t.minute || "—'");
-    const html = side === 'home'
-      ? `<li class="tl-row home">
-           ${badge}
-           <div class="tl-text">
-             <div class="tl-name">${escapeHtml(t.player)}${escapeHtml(annot)} <span class="tl-glyph">${glyph}</span></div>
-             ${assistHtml}
-           </div>
-           <span class="tl-minute">${minute}</span>
-         </li>`
-      : `<li class="tl-row away">
-           <span class="tl-minute">${minute}</span>
-           <div class="tl-text">
-             <div class="tl-name"><span class="tl-glyph">${glyph}</span> ${escapeHtml(t.player)}${escapeHtml(annot)}</div>
-             ${assistHtml}
-           </div>
-           ${badge}
-         </li>`;
-    (side === 'home' ? homeItems : awayItems).push(html);
-  }
+    if (side === 'home') {
+      return `
+        <li class="tl-row home">
+          <div class="tl-content">
+            ${badge}
+            <div class="tl-text">
+              <div class="tl-name">${escapeHtml(t.player)}${escapeHtml(annot)} <span class="tl-glyph">${glyph}</span></div>
+              ${assistHtml}
+            </div>
+          </div>
+          <span class="tl-dots" aria-hidden="true"></span>
+          <span class="tl-minute">${minute}</span>
+        </li>`;
+    }
+    return `
+      <li class="tl-row away">
+        <span class="tl-minute">${minute}</span>
+        <span class="tl-dots" aria-hidden="true"></span>
+        <div class="tl-content">
+          <div class="tl-text">
+            <div class="tl-name"><span class="tl-glyph">${glyph}</span> ${escapeHtml(t.player)}${escapeHtml(annot)}</div>
+            ${assistHtml}
+          </div>
+          ${badge}
+        </div>
+      </li>`;
+  });
   return `
     <div class="stats-section">
       <h3 class="stats-section-title">Timeline</h3>
-      <div class="timeline">
-        <ul class="tl-col tl-home">${homeItems.join('')}</ul>
-        <ul class="tl-col tl-away">${awayItems.join('')}</ul>
-      </div>
+      <ol class="timeline">${items.join('')}</ol>
     </div>
   `;
 }
@@ -931,8 +997,12 @@ function renderTeamLineup(team, eventTeam) {
 
 function renderPitchPlayer(p, abbr) {
   const photo = photoFor(abbr, p.jersey) || p.headshot || '';
+  const teamName = ABBR_TO_GUARDIAN[abbr] || abbr || '';
+  const dataAttrs = photo
+    ? `data-player-photo="${escapeHtml(photo)}" data-player-name="${escapeHtml(p.fullName || p.name)}" data-player-team="${escapeHtml(teamName)}" data-player-pos="${escapeHtml(p.pos || '')}" data-player-jersey="${escapeHtml(p.jersey || '')}" data-player-abbr="${escapeHtml(abbr || '')}" role="button" tabindex="0"`
+    : '';
   const badge = photo
-    ? `<span class="pp-badge photo"><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`
+    ? `<span class="pp-badge photo" ${dataAttrs}><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`
     : `<span class="pp-badge num">${escapeHtml(p.jersey || initialsOf(p.name))}</span>`;
   return `
     <div class="pitch-player">

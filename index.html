@@ -51,6 +51,17 @@
 
   <main id="matches" class="matches"></main>
 
+  <dialog id="player-dialog" class="player-dialog" aria-labelledby="player-dialog-name">
+    <button type="button" id="player-dialog-close" class="player-dialog-close" aria-label="Close">×</button>
+    <div class="player-dialog-photo-wrap">
+      <img id="player-dialog-photo" alt="" />
+    </div>
+    <div class="player-dialog-info">
+      <h2 id="player-dialog-name">—</h2>
+      <p id="player-dialog-meta">—</p>
+    </div>
+  </dialog>
+
   <dialog id="prefs-dialog" class="prefs-dialog" aria-labelledby="prefs-title">
     <form method="dialog" id="prefs-form">
       <h2 id="prefs-title">Notifications</h2>
