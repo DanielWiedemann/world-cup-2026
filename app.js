@@ -860,22 +860,22 @@ function renderTimeline(e, timeline, lineups) {
     if (side === 'home') {
       return `
         <li class="tl-row home">
-          <div class="tl-content">
+          <div class="tl-half">
             ${badge}
             <div class="tl-text">
               <div class="tl-name">${escapeHtml(t.player)}${escapeHtml(annot)} <span class="tl-glyph">${glyph}</span></div>
               ${assistHtml}
             </div>
+            <span class="tl-dots" aria-hidden="true"></span>
+            <span class="tl-minute">${minute}</span>
           </div>
-          <span class="tl-dots" aria-hidden="true"></span>
-          <span class="tl-minute">${minute}</span>
         </li>`;
     }
     return `
       <li class="tl-row away">
-        <span class="tl-minute">${minute}</span>
-        <span class="tl-dots" aria-hidden="true"></span>
-        <div class="tl-content">
+        <div class="tl-half">
+          <span class="tl-minute">${minute}</span>
+          <span class="tl-dots" aria-hidden="true"></span>
           <div class="tl-text">
             <div class="tl-name"><span class="tl-glyph">${glyph}</span> ${escapeHtml(t.player)}${escapeHtml(annot)}</div>
             ${assistHtml}

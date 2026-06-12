@@ -409,45 +409,44 @@ html, body {
   transform: translateX(-1px);
   border-radius: 1px;
 }
+/* Each row is a 50/50 grid. The team's content occupies one half and
+   pushes against the centre axis (minute pill closest to the axis,
+   badge furthest from it). The opposite half stays empty so the axis
+   stays clearly down the middle. */
 .tl-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr 1fr;
   align-items: center;
-  column-gap: 6px;
-  padding: 6px 0;
+  padding: 8px 0;
   font-size: 13px;
   position: relative;
 }
-.tl-row.away { grid-template-columns: auto auto 1fr; }
-.tl-content {
+.tl-half {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
-.tl-row.home .tl-content {
+.tl-row.home .tl-half {
   grid-column: 1;
   justify-content: flex-end;
-  flex-direction: row;
-  text-align: right;
-  padding-right: 4px;
+  padding-right: 8px;
 }
-.tl-row.away .tl-content {
-  grid-column: 3;
+.tl-row.away .tl-half {
+  grid-column: 2;
   justify-content: flex-start;
-  padding-left: 4px;
+  padding-left: 8px;
 }
 
-/* Dashed connector running from the event content into the central axis. */
+/* Dashed connector — sits between the text and the minute pill, so it
+   runs into the axis. */
 .tl-dots {
+  flex-shrink: 0;
   display: block;
   width: 16px;
   height: 0;
   border-top: 1.5px dashed color-mix(in srgb, var(--accent) 35%, var(--border));
-  align-self: center;
 }
-.tl-row.home .tl-dots { grid-column: 2; }
-.tl-row.away .tl-dots { grid-column: 2; }
 
 .tl-minute {
   flex-shrink: 0;
@@ -465,8 +464,6 @@ html, body {
   z-index: 1;
   line-height: 1;
 }
-.tl-row.home .tl-minute { grid-column: 3; margin-left: 4px; }
-.tl-row.away .tl-minute { grid-column: 1; margin-right: 4px; }
 
 .tl-badge {
   flex-shrink: 0;
@@ -517,6 +514,8 @@ html, body {
   gap: 6px;
 }
 .tl-row.home .tl-name { justify-content: flex-end; }
+.tl-row.home .tl-text { text-align: right; align-items: flex-end; }
+.tl-row.away .tl-text { text-align: left; align-items: flex-start; }
 .tl-glyph {
   flex-shrink: 0;
   display: inline-flex;
