@@ -57,6 +57,16 @@ document.addEventListener('visibilitychange', () => {
 });
 
 matchesEl.addEventListener('click', (e) => {
+  // Lineups sub-section toggle (independent expand state per event).
+  const lineupBtn = e.target.closest('.lineups-toggle');
+  if (lineupBtn) {
+    e.stopPropagation();
+    const key = lineupBtn.dataset.toggle;
+    if (state.expanded.has(key)) state.expanded.delete(key);
+    else state.expanded.add(key);
+    render();
+    return;
+  }
   const card = e.target.closest('.match');
   if (!card) return;
   if (card.classList.contains('pre')) return; // No stats for upcoming.
@@ -668,12 +678,58 @@ function renderStats(e) {
   if (entry.error) {
     return `<div class="stats empty">${escapeHtml(entry.error)}</div>`;
   }
-  if (!entry.rows || !entry.rows.length) {
+  const hasRows = entry.rows && entry.rows.length;
+  const hasGoals = entry.goals && entry.goals.length;
+  const hasLineups = entry.lineups && entry.lineups.home;
+  if (!hasRows && !hasGoals && !hasLineups) {
     return `<div class="stats empty">No stats available yet.</div>`;
   }
+  return `
+    <div class="stats">
+      ${hasGoals ? renderGoals(e, entry.goals) : ''}
+      ${hasRows ? renderStatsTable(e, entry.rows) : ''}
+      ${hasLineups ? renderLineups(e, entry.lineups) : ''}
+    </div>
+  `;
+}
+
+function renderGoals(e, goals) {
+  const homeAbbr = e.home?.abbr;
+  const items = goals
+    .map((g) => {
+      const onHome = g.teamAbbr && homeAbbr && g.teamAbbr === homeAbbr;
+      const teamLogo =
+        onHome ? e.home?.logo : e.away?.logo;
+      const logoHtml = teamLogo
+        ? `<img class="goal-logo" src="${escapeHtml(teamLogo)}" alt="" loading="lazy" />`
+        : `<span class="goal-logo placeholder">${escapeHtml((g.teamAbbr || '?').slice(0, 3))}</span>`;
+      const annot = g.isOwn ? ' (OG)' : g.isPenalty ? ' (P)' : '';
+      const assistHtml = g.assist
+        ? `<span class="goal-assist">assist ${escapeHtml(g.assist)}</span>`
+        : '';
+      return `
+        <li class="goal-item ${onHome ? 'home' : 'away'}">
+          <span class="goal-minute">${escapeHtml(g.minute || "—'")}</span>
+          ${logoHtml}
+          <span class="goal-text">
+            <span class="goal-scorer">${escapeHtml(g.scorer)}${escapeHtml(annot)}</span>
+            ${assistHtml}
+          </span>
+        </li>`;
+    })
+    .join('');
+  return `
+    <div class="stats-section">
+      <h3 class="stats-section-title">Goals</h3>
+      <ul class="goals-list">${items}</ul>
+    </div>
+  `;
+}
+
+function renderStatsTable(e, rows) {
   const homeName = e.home?.short || e.home?.name || 'Home';
   const awayName = e.away?.short || e.away?.name || 'Away';
-  const rowsHtml = entry.rows
+  const rowsHtml = rows
     .map(
       (row) => `
       <tr>
@@ -684,13 +740,65 @@ function renderStats(e) {
     )
     .join('');
   return `
-    <div class="stats">
+    <div class="stats-section">
+      <h3 class="stats-section-title">Statistics</h3>
       <table class="stats-table">
         <thead><tr><th>${escapeHtml(homeName)}</th><th></th><th>${escapeHtml(awayName)}</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
     </div>
   `;
+}
+
+function renderLineups(e, lineups) {
+  const lineupsKey = `lineups:${e.id}`;
+  const open = state.expanded.has(lineupsKey);
+  return `
+    <div class="stats-section lineups-section">
+      <button type="button" class="lineups-toggle" data-toggle="${escapeHtml(lineupsKey)}" aria-expanded="${open ? 'true' : 'false'}">
+        <span>Lineups</span>
+        <span class="lineups-formation">${escapeHtml(lineups.home.formation || '')} · ${escapeHtml(lineups.away.formation || '')}</span>
+        <span class="lineups-chevron">${open ? '▴' : '▾'}</span>
+      </button>
+      ${open ? `<div class="lineups-grid">
+        ${renderTeamLineup(lineups.home, e.home)}
+        ${renderTeamLineup(lineups.away, e.away)}
+      </div>` : ''}
+    </div>
+  `;
+}
+
+function renderTeamLineup(team, eventTeam) {
+  const teamLogo = eventTeam?.logo
+    ? `<img class="lineup-team-logo" src="${escapeHtml(eventTeam.logo)}" alt="" loading="lazy" />`
+    : '';
+  const players = team.starters
+    .map((p) => `
+      <li class="lineup-player">
+        ${p.headshot
+          ? `<img class="lineup-photo" src="${escapeHtml(p.headshot)}" alt="" loading="lazy" />`
+          : `<span class="lineup-photo placeholder">${escapeHtml(p.jersey || initialsOf(p.name))}</span>`}
+        <span class="lineup-name">${escapeHtml(p.name)}</span>
+        ${p.pos ? `<span class="lineup-pos">${escapeHtml(p.pos)}</span>` : ''}
+      </li>`)
+    .join('');
+  return `
+    <div class="lineup-team">
+      <div class="lineup-team-header">
+        ${teamLogo}
+        <span class="lineup-team-name">${escapeHtml(team.teamName || '')}</span>
+        ${team.formation ? `<span class="lineup-formation">${escapeHtml(team.formation)}</span>` : ''}
+      </div>
+      <ul class="lineup-players">${players}</ul>
+    </div>
+  `;
+}
+
+function initialsOf(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0][0]?.toUpperCase() || '?';
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 const STATS_LABELS = {
@@ -737,7 +845,9 @@ async function ensureStats(eventId) {
     if (!res.ok) throw new Error('ESPN ' + res.status);
     const data = await res.json();
     const rows = extractStatRows(data);
-    state.stats[eventId] = { rows, fetchedAt: Date.now() };
+    const goals = extractGoals(data);
+    const lineups = extractLineups(data);
+    state.stats[eventId] = { rows, goals, lineups, fetchedAt: Date.now() };
     saveStatsCache();
     if (state.expanded.has(eventId)) render();
   } catch (err) {
@@ -764,6 +874,60 @@ function extractStatRows(data) {
     rows.push({ label: STATS_LABELS[key], home: h ?? '–', away: a ?? '–' });
   }
   return rows;
+}
+
+function extractGoals(data) {
+  const details = data?.header?.competitions?.[0]?.details || [];
+  const goals = [];
+  for (const p of details) {
+    if (!p || !p.scoringPlay) continue;
+    const scorer = p.participants?.[0]?.athlete;
+    const assist = p.participants?.[1]?.athlete;
+    const typeText = p.type?.text || '';
+    goals.push({
+      minute: p.clock?.displayValue || '',
+      teamAbbr: p.team?.abbreviation,
+      scorer: scorer?.shortName || scorer?.displayName || '?',
+      assist: assist?.shortName || assist?.displayName,
+      isPenalty: /penalty/i.test(typeText) && !/saved|missed/i.test(typeText),
+      isOwn: /own goal/i.test(typeText),
+    });
+  }
+  // Sort by clock value (numeric where possible).
+  goals.sort((a, b) => parseInt(a.minute) - parseInt(b.minute));
+  return goals;
+}
+
+function extractLineups(data) {
+  const rosters = data?.rosters || [];
+  if (rosters.length < 2) return null;
+  const teamLineup = (r) => {
+    const all = r?.roster || [];
+    const starters = all.filter((p) => p.starter).map(playerLite);
+    const bench = all.filter((p) => !p.starter).map(playerLite);
+    return {
+      teamAbbr: r?.team?.abbreviation,
+      teamName: r?.team?.displayName,
+      formation: r?.formation || '',
+      starters,
+      bench,
+    };
+  };
+  const home = rosters.find((r) => r.homeAway === 'home') || rosters[0];
+  const away = rosters.find((r) => r.homeAway === 'away') || rosters[1];
+  return { home: teamLineup(home), away: teamLineup(away) };
+}
+
+function playerLite(p) {
+  const a = p.athlete || {};
+  return {
+    id: a.id,
+    name: a.shortName || a.displayName || '?',
+    fullName: a.displayName || a.shortName || '?',
+    jersey: p.jersey || '',
+    pos: p.position?.abbreviation || '',
+    headshot: a.headshot?.href || '',
+  };
 }
 
 function mapStats(arr) {

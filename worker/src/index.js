@@ -222,20 +222,29 @@ async function runTick(env) {
   }
 
   // (b) State-change diffs — kickoff / goal / final.
+  // KV writes are budgeted (free tier = 1k/day). Only write when something
+  // actually changed vs the previous snapshot, OR when there's no snapshot
+  // yet. Idle ticks for a 'post' match never write.
   for (const ev of fresh) {
     const prevRaw = await env.STATE.get('event:' + ev.id);
     const prev = prevRaw ? JSON.parse(prevRaw) : null;
     const diffs = diffEvent(prev, ev);
     for (const d of diffs) notifications.push(d);
-    await env.STATE.put(
-      'event:' + ev.id,
-      JSON.stringify({
-        state: ev.state,
-        homeScore: ev.homeScore,
-        awayScore: ev.awayScore,
-        name: ev.name,
-      })
-    );
+
+    const next = {
+      state: ev.state,
+      homeScore: ev.homeScore,
+      awayScore: ev.awayScore,
+      name: ev.name,
+    };
+    if (
+      !prev ||
+      prev.state !== next.state ||
+      prev.homeScore !== next.homeScore ||
+      prev.awayScore !== next.awayScore
+    ) {
+      await env.STATE.put('event:' + ev.id, JSON.stringify(next));
+    }
   }
 
   if (!notifications.length) return;
