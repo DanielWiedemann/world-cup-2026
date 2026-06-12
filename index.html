@@ -37,6 +37,7 @@
     </div>
     <div class="meta-row">
       <span id="tz-label" class="tz-label"></span>
+      <button id="predictions-chip" class="predictions-chip" hidden>🎯 <span id="predictions-points">0</span> pts</button>
       <span id="status" class="status"></span>
     </div>
     <nav class="filters" role="tablist">
@@ -44,6 +45,8 @@
       <button class="filter" data-filter="today" role="tab">Today</button>
       <button class="filter" data-filter="past" role="tab">Past</button>
       <button class="filter" data-filter="groups" role="tab">Groups</button>
+      <button class="filter" data-filter="bracket" role="tab">Bracket</button>
+      <button class="filter" data-filter="scorers" role="tab">Scorers</button>
       <button class="filter" data-filter="all" role="tab">All</button>
     </nav>
   </header>
@@ -53,6 +56,30 @@
   <div id="next-banner" class="next-banner" hidden></div>
 
   <main id="matches" class="matches"></main>
+
+  <dialog id="team-dialog" class="team-dialog" aria-labelledby="team-dialog-name">
+    <button type="button" id="team-dialog-close" class="player-dialog-close" aria-label="Close">×</button>
+    <div class="team-dialog-hero" id="team-dialog-hero">
+      <img id="team-dialog-logo" class="team-dialog-logo" alt="" />
+      <div class="team-dialog-id">
+        <h2 id="team-dialog-name">—</h2>
+        <p id="team-dialog-sub">—</p>
+      </div>
+    </div>
+    <div class="team-dialog-body" id="team-dialog-body"></div>
+  </dialog>
+
+  <dialog id="predictions-dialog" class="prefs-dialog" aria-labelledby="predictions-title">
+    <form method="dialog">
+      <h2 id="predictions-title">🎯 Your predictions</h2>
+      <p class="prefs-sub" id="predictions-sub">Exact score = 3 pts · Correct result = 1 pt</p>
+      <div id="predictions-list" class="predictions-list"></div>
+      <menu class="prefs-actions">
+        <span class="spacer"></span>
+        <button type="submit" class="primary-btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
 
   <dialog id="player-dialog" class="player-dialog" aria-labelledby="player-dialog-name">
     <button type="button" id="player-dialog-close" class="player-dialog-close" aria-label="Close">×</button>
