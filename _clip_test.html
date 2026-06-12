@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<main id="matches" class="matches">
+  <div class="groups-grid">
+    <section class="group-card">
+      <h2 class="group-title">Group A</h2>
+      <table class="group-table">
+        <thead>
+          <tr><th class="gt-pos"></th><th class="gt-team">Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th class="gt-gd">GD</th><th class="gt-pts">Pts</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="gt-pos"><span class="pos-chip">1</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">Netherlands</span></td><td>3</td><td>2</td><td>1</td><td>0</td><td class="gt-gd">+5</td><td class="gt-pts">7</td></tr>
+          <tr><td class="gt-pos"><span class="pos-chip">2</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">Switzerland</span></td><td>3</td><td>1</td><td>2</td><td>0</td><td class="gt-gd">+2</td><td class="gt-pts">5</td></tr>
+          <tr><td class="gt-pos"><span class="pos-chip">3</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">United States</span></td><td>3</td><td>1</td><td>0</td><td>2</td><td class="gt-gd">-3</td><td class="gt-pts">3</td></tr>
+          <tr><td class="gt-pos"><span class="pos-chip">4</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">Saudi Arabia</span></td><td>3</td><td>0</td><td>1</td><td>2</td><td class="gt-gd">-4</td><td class="gt-pts">1</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="group-card">
+      <h2 class="group-title">Group B</h2>
+      <table class="group-table">
+        <thead>
+          <tr><th class="gt-pos"></th><th class="gt-team">Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th class="gt-gd">GD</th><th class="gt-pts">Pts</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="gt-pos"><span class="pos-chip">1</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">Argentina</span></td><td>3</td><td>3</td><td>0</td><td>0</td><td class="gt-gd">+8</td><td class="gt-pts">9</td></tr>
+          <tr><td class="gt-pos"><span class="pos-chip">2</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">Uzbekistan</span></td><td>3</td><td>1</td><td>1</td><td>1</td><td class="gt-gd">-1</td><td class="gt-pts">4</td></tr>
+          <tr><td class="gt-pos"><span class="pos-chip">3</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">South Africa</span></td><td>3</td><td>1</td><td>1</td><td>1</td><td class="gt-gd">-2</td><td class="gt-pts">4</td></tr>
+          <tr><td class="gt-pos"><span class="pos-chip">4</span></td><td class="gt-team"><img class="gt-logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="" /><span class="gt-name">New Zealand</span></td><td>3</td><td>0</td><td>0</td><td>3</td><td class="gt-gd">-5</td><td class="gt-pts">0</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</main>
+<script>
+window.measure = function () {
+  const out = { viewport: window.innerWidth, cards: [] };
+  document.querySelectorAll('.group-card').forEach((card) => {
+    const table = card.querySelector('.group-table');
+    const cardRect = card.getBoundingClientRect();
+    const cs = getComputedStyle(card);
+    const contentRight = cardRect.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+    const lastPtsTd = card.querySelector('tbody tr:last-child .gt-pts');
+    const ptsRect = lastPtsTd.getBoundingClientRect();
+    const ptsHeader = card.querySelector('th.gt-pts').getBoundingClientRect();
+    out.cards.push({
+      cardClientWidth: card.clientWidth,
+      cardContentWidth: card.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+      tableOffsetWidth: table.offsetWidth,
+      tableScrollOverflow: card.scrollWidth - card.clientWidth,
+      ptsCellRight: ptsRect.right,
+      ptsHeaderRight: ptsHeader.right,
+      cardVisibleRight: cardRect.right,
+      ptsClippedPx: Math.max(0, ptsRect.right - cardRect.right),
+      nameWidths: [...card.querySelectorAll('.gt-name')].map((n) => ({
+        t: n.textContent, w: Math.round(n.getBoundingClientRect().width * 10) / 10
+      })),
+    });
+  });
+  return out;
+};
+</script>
+</body>
+</html>
