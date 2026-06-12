@@ -480,22 +480,27 @@ html, body {
   box-shadow: 0 0 0 2px #ffd45c, 0 0 12px rgba(255, 212, 92, 0.4);
 }
 .tl-row.goal .tl-glyph { font-size: 16px; }
+/* No overflow:hidden here so the goal-badge gold ring + glow can paint
+   beyond the badge bounds. Each text child already does its own
+   line-clamp / ellipsis, so we don't need the half to clip on overflow.
+   The outer padding gives the ring room on the far edge. */
 .tl-half {
   display: flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
-  overflow: hidden;
 }
 .tl-row.home .tl-half {
   grid-column: 1;
   justify-content: flex-end;
   padding-right: 6px;
+  padding-left: 10px;
 }
 .tl-row.away .tl-half {
   grid-column: 2;
   justify-content: flex-start;
   padding-left: 6px;
+  padding-right: 10px;
 }
 
 /* Dashed connector — sits between the text and the minute pill, so it
