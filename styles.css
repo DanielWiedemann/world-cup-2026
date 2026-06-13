@@ -1626,7 +1626,13 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 .pred-status-pts.won { color: var(--accent); }
 .pred-status-pts.lost { color: var(--muted); }
-.predl-motm { color: #ffd45c; font-size: 11px; }
+.predl-motm {
+  color: #ffd45c;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .stats-loading-inline { color: var(--muted); font-style: italic; padding: 8px 0; font-size: 12.5px; }
 
 .pred-chip {
@@ -1656,33 +1662,87 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 .predictions-chip:hover { background: rgba(255,255,255,0.2); }
 
-.predictions-list { max-height: 320px; overflow-y: auto; }
-.predl-row {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 2px;
-  font-size: 13px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  font-variant-numeric: tabular-nums;
+.predictions-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px;
+  margin: 0 -2px;
 }
-.predl-match {
-  font-weight: 700;
+/* Each prediction is a two-line card: matchup + points on top, your call
+   + the actual result below. Far easier to read on a narrow phone than the
+   old single cramped row that wrapped. */
+.predl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+.predl-head,
+.predl-sub {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
 }
-.predl-flag { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+.predl-match {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 800;
+  font-size: 15px;
+}
+.predl-flag {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.predl-flag.placeholder {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+}
 .predl-abbr { font-variant-numeric: tabular-nums; }
-.predl-v { color: var(--muted); font-weight: 600; margin: 0 1px; }
-.predl-pred { color: var(--muted); }
-.predl-actual { color: var(--muted); font-size: 12px; }
-.predl-pts { font-weight: 800; }
-.predl-pts.won { color: var(--accent); }
-.predl-pts.lost { color: var(--muted); }
-.predl-pts.pending { color: var(--muted); }
+.predl-v { color: var(--muted); font-weight: 600; font-size: 12px; margin: 0 1px; }
+.predl-pred {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.predl-pred strong { font-weight: 800; }
+.predl-actual {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.predl-actual.live { color: var(--live); font-weight: 700; }
+.predl-pts {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+.predl-pts.won { color: #04130d; background: var(--accent); }
+.predl-pts.lost { color: var(--muted); background: rgba(255, 255, 255, 0.05); }
+.predl-pts.pending { color: var(--muted); background: rgba(255, 255, 255, 0.06); }
 
 /* --- Team dialog --- */
 .team-dialog {

@@ -2008,33 +2008,38 @@ predictionsChip?.addEventListener('click', () => {
     .map((e) => {
       const p = getPrediction(e.id);
       const pts = finalPoints(e);
+      const isLive = e.state === 'in';
       const actual =
         e.state === 'post'
-          ? `${e.home?.score}–${e.away?.score}`
-          : e.state === 'in'
-          ? 'live'
+          ? `Final ${e.home?.score}–${e.away?.score}`
+          : isLive
+          ? `LIVE ${e.home?.score}–${e.away?.score}`
           : formatDayLabel(localDayKey(e.date));
       const ptsHtml =
         pts == null
-          ? '<span class="predl-pts pending">…</span>'
-          : `<span class="predl-pts ${pts > 0 ? 'won' : 'lost'}">+${pts}</span>`;
+          ? '<span class="predl-pts pending">·</span>'
+          : `<span class="predl-pts ${pts > 0 ? 'won' : 'lost'}">${pts > 0 ? '+' + pts : '0'}</span>`;
       const motmHtml = p.motm
         ? `<span class="predl-motm">⭐ ${escapeHtml(p.motm.name.split(' ').pop())}</span>`
         : '';
       const flag = (t) =>
         t?.logo
           ? `<img class="predl-flag" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
-          : '';
+          : '<span class="predl-flag placeholder"></span>';
       return `
         <div class="predl-row">
-          <span class="predl-match">
-            ${flag(e.home)}<span class="predl-abbr">${escapeHtml(e.home?.abbr || '?')}</span>
-            <span class="predl-v">v</span>
-            ${flag(e.away)}<span class="predl-abbr">${escapeHtml(e.away?.abbr || '?')}</span>
-          </span>
-          <span class="predl-pred">🎯 ${p.h}–${p.a} ${motmHtml}</span>
-          <span class="predl-actual">${escapeHtml(actual)}</span>
-          ${ptsHtml}
+          <div class="predl-head">
+            <span class="predl-match">
+              ${flag(e.home)}<span class="predl-abbr">${escapeHtml(e.home?.abbr || '?')}</span>
+              <span class="predl-v">v</span>
+              ${flag(e.away)}<span class="predl-abbr">${escapeHtml(e.away?.abbr || '?')}</span>
+            </span>
+            ${ptsHtml}
+          </div>
+          <div class="predl-sub">
+            <span class="predl-pred">🎯 <strong>${p.h}–${p.a}</strong>${motmHtml}</span>
+            <span class="predl-actual${isLive ? ' live' : ''}">${escapeHtml(actual)}</span>
+          </div>
         </div>`;
     })
     .join('');
