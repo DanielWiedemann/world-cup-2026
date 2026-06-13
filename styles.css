@@ -116,6 +116,40 @@ html, body {
 }
 .filter.active { background: #fff; color: var(--accent-deep); }
 
+/* LIVE tab — red, vibrant, pulsing. Appears only while a match is on. */
+.filter-live {
+  background: var(--live);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0 0 0 rgba(255, 90, 90, 0.6);
+  animation: live-tab-pulse 1.8s ease-in-out infinite;
+}
+.filter-live.active {
+  background: var(--live);
+  color: #fff;
+  box-shadow: 0 0 0 2px #fff inset, 0 4px 14px rgba(255, 90, 90, 0.5);
+}
+.filter-live .live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  animation: live-tab-dot 1.2s ease-in-out infinite;
+}
+@keyframes live-tab-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 90, 90, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 90, 90, 0); }
+}
+@keyframes live-tab-dot {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+.live-only { margin-top: 4px; }
+
 .next-banner {
   position: relative;
   max-width: var(--max-w);
@@ -630,11 +664,16 @@ html, body {
   display: flex;
   align-items: center;
   gap: 5px;
-  /* Wrap to 2 lines max with ellipsis on overflow. */
+  min-width: 0;
+}
+/* The NAME text clamps to 2 lines; the glyph (goal ball / card) is a sibling
+   that never shrinks, so it's always visible even when the name wraps. */
+.tl-nm {
+  min-width: 0;
+  overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 .tl-row.home .tl-name { justify-content: flex-end; }
 .tl-row.home .tl-text { text-align: right; align-items: flex-end; }
@@ -1301,10 +1340,10 @@ tr.qual-direct .gt-name { color: var(--text); }
 .pred-panel { text-align: center; }
 .pred-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  gap: 16px;
-  margin: 8px 0 10px;
+  gap: 18px;
+  margin: 10px 0;
 }
 .pred-side { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .pred-team {
@@ -1335,8 +1374,119 @@ tr.qual-direct .gt-name { color: var(--text); }
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-.pred-x { font-size: 18px; color: var(--muted); font-weight: 300; padding-top: 14px; }
-.pred-hint { font-size: 11px; color: var(--muted); margin: 0; }
+/* Colon sits level with the big score numbers (team label + 8px gap above). */
+.pred-x { font-size: 22px; color: var(--muted); font-weight: 300; align-self: flex-start; margin-top: 26px; line-height: 1; }
+.pred-hint { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+
+/* MOTM picker */
+.motm-picker {
+  margin: 12px 0 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+.motm-title {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  margin: 0 0 8px;
+  text-align: center;
+}
+.motm-bonus {
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.motm-team-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 6px 2px 4px;
+}
+.motm-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.motm-chip {
+  flex: 0 0 auto;
+  width: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 2px;
+}
+.motm-chip img,
+.motm-chip .motm-num {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface-2);
+  border: 2px solid transparent;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: var(--muted);
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+.motm-chip:hover img,
+.motm-chip:hover .motm-num { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.motm-chip.selected img,
+.motm-chip.selected .motm-num {
+  border-color: #ffd45c;
+  box-shadow: 0 0 12px rgba(255, 212, 92, 0.45);
+  transform: scale(1.05);
+}
+.motm-name {
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.motm-chip.selected .motm-name { color: #ffd45c; }
+
+/* Read-only prediction status inside live/finished match detail */
+.pred-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #ffd45c 10%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, #ffd45c 28%, var(--border));
+  font-size: 12.5px;
+}
+.pred-status-call strong { font-variant-numeric: tabular-nums; }
+.pred-status-pts {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pred-status-pts.won { color: var(--accent); }
+.pred-status-pts.lost { color: var(--muted); }
+.predl-motm { color: #ffd45c; font-size: 11px; }
+.stats-loading-inline { color: var(--muted); font-style: italic; padding: 8px 0; font-size: 12.5px; }
 
 .pred-chip {
   flex-shrink: 0;
@@ -1395,10 +1545,13 @@ tr.qual-direct .gt-name { color: var(--text); }
   box-shadow: 0 30px 80px rgba(0,0,0,0.6);
   margin: auto;
   overflow: hidden;
-  display: flex;
   flex-direction: column;
 }
+/* A <dialog> defaults to display:none when closed. We only switch it on when
+   [open] so it never bleeds into the page as a non-modal block (the bug that
+   left a stuck team card at the bottom of the list). */
 .team-dialog[open] { display: flex; }
+.team-dialog:not([open]) { display: none; }
 .team-dialog::backdrop { background: rgba(5, 14, 11, 0.72); backdrop-filter: blur(6px); }
 .team-dialog-hero {
   display: flex;
@@ -1552,7 +1705,11 @@ tr.qual-direct .gt-name { color: var(--text); }
 
 /* --- Knockout bracket --- */
 .bracket-wrap {
+  /* Horizontal scroll only. Without an explicit overflow-y, the browser
+     forces it to `auto` when overflow-x isn't `visible`, which produced a
+     second (vertical) scrollbar — the double-scroll bug. */
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   margin: 0 -14px;
   padding: 0 14px 8px;
@@ -1562,7 +1719,12 @@ tr.qual-direct .gt-name { color: var(--text); }
   gap: 18px;
   min-width: 1060px;
 }
-.bk-col { flex: 1; min-width: 190px; }
+.bk-col {
+  flex: 1;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+}
 .bk-round {
   font-size: 10.5px;
   font-weight: 800;
@@ -1572,15 +1734,18 @@ tr.qual-direct .gt-name { color: var(--text); }
   margin: 0 0 10px;
   text-align: center;
 }
+/* Each column spreads its matches evenly over the same height as the R32
+   column, so a round's match centres between its two feeders — no fixed
+   pixel height, so the content sizes itself and the page owns the (single)
+   vertical scroll. */
 .bk-col-grid {
-  display: grid;
-  grid-template-rows: repeat(16, minmax(58px, 1fr));
-  height: 1000px;
-  row-gap: 6px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 6px;
 }
 .bk-match {
-  grid-row: span var(--span, 1);
-  align-self: center;
   width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1626,7 +1791,9 @@ tr.qual-direct .gt-name { color: var(--text); }
   .next-num.tick,
   .skeleton-card,
   .skeleton-line,
-  .app-header::after { animation: none; }
+  .app-header::after,
+  .filter-live,
+  .filter-live .live-dot { animation: none; }
 }
 
 .prefs-dialog {

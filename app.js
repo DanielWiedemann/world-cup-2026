@@ -93,15 +93,54 @@ state.standings = loadStandingsCache();
 if (state.standings) buildGroupIndex();
 state.scorers = loadScorersCache();
 
-document.querySelectorAll('.filter').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.filter').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.filter = btn.dataset.filter;
-    state.animateNext = true;
-    render();
-  });
+// Event delegation on the filters bar so dynamically-added tabs (the LIVE
+// tab) work too.
+const filtersBar = document.querySelector('.filters');
+let userNavigated = false;
+filtersBar.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.filter');
+  if (!btn) return;
+  userNavigated = true; // a real tap — never auto-yank them away after this
+  setFilter(btn.dataset.filter);
 });
+
+function setFilter(filter) {
+  state.filter = filter;
+  state.animateNext = true;
+  filtersBar.querySelectorAll('.filter').forEach((b) =>
+    b.classList.toggle('active', b.dataset.filter === filter)
+  );
+  if (filter === 'scorers') ensureScorers();
+  if (filter === 'groups') ensureStandings();
+  render();
+}
+
+// The LIVE tab appears (far left, red, pulsing) only while a match is in
+// progress, and is removed when none are. It shows that match alone.
+let liveTabAutoShown = false;
+function syncLiveTab() {
+  const anyLive = state.events.some((e) => e.state === 'in');
+  let liveBtn = filtersBar.querySelector('.filter[data-filter="live"]');
+  if (anyLive && !liveBtn) {
+    liveBtn = document.createElement('button');
+    liveBtn.className = 'filter filter-live';
+    liveBtn.dataset.filter = 'live';
+    liveBtn.setAttribute('role', 'tab');
+    liveBtn.innerHTML = '<span class="live-dot"></span>LIVE';
+    filtersBar.insertBefore(liveBtn, filtersBar.firstChild);
+    // Auto-jump to LIVE only once, and only if the user is sitting on the
+    // default tab and hasn't navigated — never yank them out of a tab they
+    // chose (e.g. mid-read on Groups when a match kicks off).
+    if (!liveTabAutoShown) {
+      liveTabAutoShown = true;
+      if (!userNavigated && state.filter === 'upcoming') setFilter('live');
+    }
+  } else if (!anyLive && liveBtn) {
+    liveBtn.remove();
+    if (state.filter === 'live') setFilter('today');
+  }
+}
+
 refreshBtn.addEventListener('click', () => {
   load({ force: true });
   if (state.filter === 'groups') ensureStandings(true);
@@ -127,6 +166,13 @@ matchesEl.addEventListener('click', (e) => {
   if (stepBtn) {
     e.stopPropagation();
     onPredictionStep(stepBtn);
+    return;
+  }
+  // Man-of-the-Match pick.
+  const motmBtn = e.target.closest('.motm-chip');
+  if (motmBtn) {
+    e.stopPropagation();
+    onMotmPick(motmBtn);
     return;
   }
   // Team tap → team sheet (match cards and group tables).
@@ -719,6 +765,7 @@ async function livePoll() {
     );
     saveCache(state.events);
     setUpdated(Date.now());
+    syncLiveTab();
     render();
     // GOAL! Celebrate any live match whose total just went up.
     for (const e of state.events) {
@@ -836,7 +883,9 @@ async function load({ force = false } = {}) {
     saveCache(dedup);
     setUpdated(Date.now());
     setStatus('');
+    syncLiveTab();
     render();
+    resolvePredictionStats();
   } catch (err) {
     console.error(err);
     setStatus('Offline — showing cached data');
@@ -976,19 +1025,18 @@ function predictionChip(e) {
       ? `<span class="pred-chip">🎯 ${p.h}–${p.a}</span>`
       : '';
   }
-  if (e.state === 'post') {
-    const pts = predictionPoints(e);
-    if (pts == null) return '';
-    return `<span class="pred-chip ${pts > 0 ? 'won' : 'lost'}">🎯 +${pts}</span>`;
-  }
-  return '';
+  // live or post: show running points if a call was made
+  const total = predictionTotal(e);
+  if (total == null) return '';
+  const cls = e.state === 'post' ? (total > 0 ? 'won' : 'lost') : 'live';
+  return `<span class="pred-chip ${cls}">🎯 ${e.state === 'post' ? '+' : ''}${total}${e.state === 'in' ? ' pts' : ''}</span>`;
 }
 
-function matchCard(e, { hero = false } = {}) {
+function matchCard(e, { hero = false, forceExpand = false } = {}) {
   const live = e.state === 'in';
   const done = e.state === 'post';
   const upcoming = e.state === 'pre';
-  const isExpanded = state.expanded.has(e.id);
+  const isExpanded = forceExpand || state.expanded.has(e.id);
   const score =
     !upcoming && e.home && e.away
       ? `<div class="score"><span>${escapeHtml(e.home.score)}</span><span class="dash">–</span><span>${escapeHtml(e.away.score)}</span></div>`
@@ -1009,7 +1057,9 @@ function matchCard(e, { hero = false } = {}) {
   const share = !upcoming
     ? `<button type="button" class="share-btn" data-share="${escapeHtml(e.id)}" aria-label="Share result" title="Share">${SHARE_ICON}</button>`
     : '';
-  const hint = `<span class="expand-hint" aria-hidden="true">${isExpanded ? '▴' : '▾'}</span>`;
+  const hint = forceExpand
+    ? ''
+    : `<span class="expand-hint" aria-hidden="true">${isExpanded ? '▴' : '▾'}</span>`;
   // Live hero gets a team-colour glow.
   const heroGlow =
     hero && safeHex(e.home?.color)
@@ -1354,10 +1404,12 @@ function savePredictions() {
   try { localStorage.setItem(PREDICTIONS_KEY, JSON.stringify(predictions)); } catch {}
 }
 
-// 3 pts exact score, 1 pt correct outcome, 0 otherwise; null if no prediction.
-function predictionPoints(e) {
+// Score points: 3 exact, 1 correct outcome, 0 otherwise. Works for live
+// (provisional, based on current score) and post (final). null if no score
+// available yet or no prediction.
+function scorePoints(e) {
   const p = getPrediction(e.id);
-  if (!p || e.state !== 'post') return null;
+  if (!p || e.state === 'pre') return null;
   const h = parseInt(e.home?.score, 10);
   const a = parseInt(e.away?.score, 10);
   if (!Number.isFinite(h) || !Number.isFinite(a)) return null;
@@ -1366,27 +1418,127 @@ function predictionPoints(e) {
   return 0;
 }
 
+function lastNameKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[.''`]/g, '')
+    .trim()
+    .split(/\s+/)
+    .pop();
+}
+
+// Did the predicted Man of the Match score a goal? Needs the match's loaded
+// timeline + lineups. Returns true/false, or null if unresolved (no pick, or
+// stats not loaded yet).
+function motmScored(e) {
+  const p = getPrediction(e.id);
+  if (!p?.motm) return null;
+  const entry = state.stats[e.id];
+  if (!entry || !entry.timeline) return null;
+  for (const t of entry.timeline) {
+    if (!/goal$/.test(t.kind)) continue;
+    const side = timelineSide(t, e);
+    const abbr = side === 'home' ? e.home?.abbr : e.away?.abbr;
+    if (abbr !== p.motm.abbr) continue;
+    const rp = findRosterPlayer(entry.lineups, side, t.athleteId, t.player);
+    if (rp?.jersey && String(rp.jersey) === String(p.motm.jersey)) return true;
+    if (t.player && p.motm.name && lastNameKey(t.player) === lastNameKey(p.motm.name)) return true;
+  }
+  return false;
+}
+
+// +2 if the MOTM pick scored, 0 if resolved-and-didn't, null if no pick /
+// unresolved.
+function motmBonus(e) {
+  const p = getPrediction(e.id);
+  if (!p?.motm) return null;
+  const scored = motmScored(e);
+  if (scored == null) return null;
+  return scored ? 2 : 0;
+}
+
+// Combined running points for the card chip (live = provisional).
+function predictionTotal(e) {
+  if (e.state === 'pre') return null;
+  const sp = scorePoints(e);
+  if (sp == null) return null;
+  return sp + (motmBonus(e) || 0);
+}
+
+// Final, locked points — only counts finished matches toward the header total.
+function finalPoints(e) {
+  if (e.state !== 'post') return null;
+  const sp = scorePoints(e);
+  if (sp == null) return null;
+  return sp + (motmBonus(e) || 0);
+}
+
 function totalPredictionPoints() {
   let total = 0;
   for (const e of state.events) {
-    const pts = predictionPoints(e);
+    const pts = finalPoints(e);
     if (pts != null) total += pts;
   }
   return total;
 }
 
+// Make sure finished matches we predicted have their timeline loaded so the
+// MOTM bonus can resolve.
+function resolvePredictionStats() {
+  for (const e of state.events) {
+    if (e.state === 'post' && getPrediction(e.id)?.motm && !state.stats[e.id]) {
+      ensureStats(e.id);
+    }
+  }
+}
+
+function squadList(abbr) {
+  const gName = ABBR_TO_GUARDIAN[abbr];
+  const squad = photoDb && gName ? photoDb[gName] : null;
+  if (!squad) return [];
+  return Object.entries(squad)
+    .map(([num, p]) => ({ num: parseInt(num, 10), name: p.name, photo: p.photo }))
+    .sort((a, b) => a.num - b.num);
+}
+
+function motmChip(e, abbr, pl, motm) {
+  const sel = motm && motm.abbr === abbr && String(motm.jersey) === String(pl.num);
+  const inner = pl.photo
+    ? `<img src="${escapeHtml(pl.photo)}" alt="" loading="lazy" />`
+    : `<span class="motm-num">${pl.num}</span>`;
+  return `<button type="button" class="motm-chip${sel ? ' selected' : ''}" data-ev="${escapeHtml(e.id)}" data-abbr="${escapeHtml(abbr)}" data-jersey="${pl.num}" data-name="${escapeHtml(pl.name)}">
+    ${inner}
+    <span class="motm-name">${escapeHtml(pl.name.split(' ').pop())}</span>
+  </button>`;
+}
+
 function renderPredictionPanel(e) {
-  const p = getPrediction(e.id) || { h: 0, a: 0 };
-  const saved = !!getPrediction(e.id);
+  const pred = getPrediction(e.id);
+  const p = pred || { h: 0, a: 0 };
+  const saved = !!pred;
   const side = (team, key) => `
     <div class="pred-side">
-      <span class="pred-team">${escapeHtml(team?.abbr || '?')}</span>
+      <span class="pred-team">${escapeHtml(team?.short || team?.abbr || '?')}</span>
       <div class="pred-ctrl">
         <button type="button" class="pred-step" data-ev="${escapeHtml(e.id)}" data-side="${key}" data-delta="-1" aria-label="decrease">−</button>
         <span class="pred-val">${p[key]}</span>
         <button type="button" class="pred-step" data-ev="${escapeHtml(e.id)}" data-side="${key}" data-delta="1" aria-label="increase">+</button>
       </div>
     </div>`;
+  const motm = pred?.motm;
+  const homeSquad = squadList(e.home?.abbr);
+  const awaySquad = squadList(e.away?.abbr);
+  const motmSection =
+    homeSquad.length || awaySquad.length
+      ? `
+    <div class="motm-picker">
+      <h4 class="motm-title">⭐ Man of the Match <span class="motm-bonus">+2 if they score</span></h4>
+      ${homeSquad.length ? `<div class="motm-team-label">${escapeHtml(e.home?.short || e.home?.abbr || '')}</div>
+      <div class="motm-scroll">${homeSquad.map((pl) => motmChip(e, e.home.abbr, pl, motm)).join('')}</div>` : ''}
+      ${awaySquad.length ? `<div class="motm-team-label">${escapeHtml(e.away?.short || e.away?.abbr || '')}</div>
+      <div class="motm-scroll">${awaySquad.map((pl) => motmChip(e, e.away.abbr, pl, motm)).join('')}</div>` : ''}
+    </div>`
+      : '';
   return `
     <div class="stats pred-panel">
       <h3 class="stats-section-title">🎯 Your prediction</h3>
@@ -1395,7 +1547,31 @@ function renderPredictionPanel(e) {
         <span class="pred-x">:</span>
         ${side(e.away, 'a')}
       </div>
-      <p class="pred-hint">${saved ? 'Saved — auto-scored at full time.' : 'Tap + / − to set a score.'} Exact score 3 pts · result 1 pt.</p>
+      ${motmSection}
+      <p class="pred-hint">${saved ? 'Saved — auto-scored at full time.' : 'Tap + / − to set a score.'} Exact 3 pts · result 1 pt · MOTM +2.</p>
+    </div>`;
+}
+
+// Read-only prediction status shown inside live/finished match stats so the
+// user can always find their call once the game is underway.
+function renderPredictionStatus(e) {
+  const p = getPrediction(e.id);
+  if (!p) return '';
+  const total = predictionTotal(e);
+  const motmName = p.motm ? p.motm.name.split(' ').pop() : '';
+  const motmState =
+    p.motm
+      ? motmBonus(e) == null
+        ? `· MOTM ${escapeHtml(motmName)}`
+        : motmBonus(e) > 0
+        ? `· MOTM ${escapeHtml(motmName)} ✓`
+        : `· MOTM ${escapeHtml(motmName)} ✗`
+      : '';
+  const label = e.state === 'post' ? 'Final' : 'So far';
+  return `
+    <div class="pred-status">
+      <span class="pred-status-call">🎯 You called <strong>${p.h}–${p.a}</strong> ${motmState}</span>
+      <span class="pred-status-pts ${total > 0 ? 'won' : 'lost'}">${label}: ${total == null ? '…' : '+' + total} pts</span>
     </div>`;
 }
 
@@ -1404,7 +1580,30 @@ function onPredictionStep(btn) {
   const side = btn.dataset.side;
   const delta = parseInt(btn.dataset.delta, 10);
   const cur = predictions[id] || { h: 0, a: 0 };
-  cur[side] = Math.max(0, Math.min(9, (cur[side] || 0) + delta));
+  cur.h = cur.h || 0;
+  cur.a = cur.a || 0;
+  cur[side] = Math.max(0, Math.min(19, (cur[side] || 0) + delta));
+  predictions[id] = cur;
+  savePredictions();
+  render();
+  updatePredictionsChip();
+}
+
+function onMotmPick(chip) {
+  const id = chip.dataset.ev;
+  const cur = predictions[id] || { h: 0, a: 0 };
+  cur.h = cur.h || 0;
+  cur.a = cur.a || 0;
+  const pick = {
+    abbr: chip.dataset.abbr,
+    jersey: parseInt(chip.dataset.jersey, 10),
+    name: chip.dataset.name,
+  };
+  if (cur.motm && cur.motm.abbr === pick.abbr && cur.motm.jersey === pick.jersey) {
+    delete cur.motm; // tap again to deselect
+  } else {
+    cur.motm = pick;
+  }
   predictions[id] = cur;
   savePredictions();
   render();
@@ -1424,11 +1623,12 @@ function updatePredictionsChip() {
 }
 
 predictionsChip?.addEventListener('click', () => {
+  resolvePredictionStats();
   const rows = state.events
     .filter((e) => getPrediction(e.id))
     .map((e) => {
       const p = getPrediction(e.id);
-      const pts = predictionPoints(e);
+      const pts = finalPoints(e);
       const actual =
         e.state === 'post'
           ? `${e.home?.score}–${e.away?.score}`
@@ -1439,10 +1639,13 @@ predictionsChip?.addEventListener('click', () => {
         pts == null
           ? '<span class="predl-pts pending">…</span>'
           : `<span class="predl-pts ${pts > 0 ? 'won' : 'lost'}">+${pts}</span>`;
+      const motmHtml = p.motm
+        ? `<span class="predl-motm">⭐ ${escapeHtml(p.motm.name.split(' ').pop())}</span>`
+        : '';
       return `
         <div class="predl-row">
           <span class="predl-match">${escapeHtml(e.home?.abbr || '?')} v ${escapeHtml(e.away?.abbr || '?')}</span>
-          <span class="predl-pred">🎯 ${p.h}–${p.a}</span>
+          <span class="predl-pred">🎯 ${p.h}–${p.a} ${motmHtml}</span>
           <span class="predl-actual">${escapeHtml(actual)}</span>
           ${ptsHtml}
         </div>`;
@@ -1480,11 +1683,14 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
-function openTeamDialog(abbr) {
+async function openTeamDialog(abbr) {
   if (!teamDialog) return;
+  await ensurePhotoDb(); // squad photos must be ready before we build the body
   const team = teamFromEvents(abbr);
-  const standing = standingFor(abbr);
   const guardianName = ABBR_TO_GUARDIAN[abbr] || abbr;
+  // Nothing real to show (e.g. a knockout placeholder) — don't open an empty shell.
+  if (!team && !photoDb?.[guardianName]) return;
+  const standing = standingFor(abbr);
   const color = safeHex(team?.color);
 
   const hero = $('#team-dialog-hero');
@@ -1552,6 +1758,8 @@ function openTeamDialog(abbr) {
     <h3 class="stats-section-title">Squad</h3>
     ${squadHtml}
   `;
+  $('#team-dialog-body').scrollTop = 0;
+  if (teamDialog.open) teamDialog.close();
   if (typeof teamDialog.showModal === 'function') teamDialog.showModal();
 }
 
@@ -1583,21 +1791,23 @@ teamDialog?.addEventListener('click', (e) => {
 });
 
 function renderStats(e) {
+  const predStatus = renderPredictionStatus(e);
   const entry = state.stats[e.id];
   if (!entry) {
-    return `<div class="stats loading">Loading stats…</div>`;
+    return `<div class="stats">${predStatus}<div class="stats-loading-inline">Loading match detail…</div></div>`;
   }
   if (entry.error) {
-    return `<div class="stats empty">${escapeHtml(entry.error)}</div>`;
+    return `<div class="stats">${predStatus}<div class="stats empty">${escapeHtml(entry.error)}</div></div>`;
   }
   const hasRows = entry.rows && entry.rows.length;
   const hasTimeline = entry.timeline && entry.timeline.length;
   const hasLineups = entry.lineups && entry.lineups.home;
   if (!hasRows && !hasTimeline && !hasLineups) {
-    return `<div class="stats empty">No stats available yet.</div>`;
+    return `<div class="stats">${predStatus}<div class="stats empty">No stats available yet.</div></div>`;
   }
   return `
     <div class="stats">
+      ${predStatus}
       ${hasTimeline ? renderTimeline(e, entry.timeline, entry.lineups) : ''}
       ${hasRows ? renderStatsTable(e, entry.rows) : ''}
       ${hasLineups ? renderLineups(e, entry.lineups) : ''}
@@ -1697,13 +1907,16 @@ function renderTimeline(e, timeline, lineups) {
     const minute = escapeHtml(t.minute || "—'");
     const isGoal = /goal$/.test(t.kind);
     const rowCls = `tl-row ${side} ${isGoal ? 'goal' : ''}${t.kind === 'sub' ? ' sub' : ''}`;
+    const nameInner = `<span class="tl-nm">${escapeHtml(t.player)}${escapeHtml(annot)}</span>`;
+    // Glyph lives OUTSIDE the line-clamped name span so cards/goals are never
+    // clipped when a long name wraps to two lines.
     if (side === 'home') {
       return `
         <li class="${rowCls}">
           <div class="tl-half">
             ${badge}
             <div class="tl-text">
-              <div class="tl-name">${escapeHtml(t.player)}${escapeHtml(annot)} <span class="tl-glyph">${glyph}</span></div>
+              <div class="tl-name">${nameInner}<span class="tl-glyph">${glyph}</span></div>
               ${assistHtml}
             </div>
             <span class="tl-dots" aria-hidden="true"></span>
@@ -1717,7 +1930,7 @@ function renderTimeline(e, timeline, lineups) {
           <span class="tl-minute">${minute}</span>
           <span class="tl-dots" aria-hidden="true"></span>
           <div class="tl-text">
-            <div class="tl-name"><span class="tl-glyph">${glyph}</span> ${escapeHtml(t.player)}${escapeHtml(annot)}</div>
+            <div class="tl-name"><span class="tl-glyph">${glyph}</span>${nameInner}</div>
             ${assistHtml}
           </div>
           ${badge}
@@ -1964,6 +2177,10 @@ async function ensureStats(eventId) {
     Date.now() - cached.fetchedAt < (isLive ? 30 * 1000 : STATS_CACHE_TTL_MS);
   if (cached && isFresh && !cached.error) return;
   if (cached && cached.loading) return;
+  // Error backoff: a failed fetch (e.g. ESPN 404 before a boxscore exists at
+  // kickoff, or offline) is treated as fresh for 60s. Without this, the live
+  // view's per-render ensureStats() loop would re-fetch + re-render forever.
+  if (cached && cached.error && cached.fetchedAt && Date.now() - cached.fetchedAt < 60 * 1000) return;
   state.stats[eventId] = { ...(cached || {}), loading: true };
   try {
     const res = await fetch(`${STATS_BASE}?event=${encodeURIComponent(eventId)}`);
@@ -1978,13 +2195,16 @@ async function ensureStats(eventId) {
     };
     state.stats[eventId] = { rows, timeline, lineups, info, fetchedAt: Date.now() };
     saveStatsCache();
-    if (state.expanded.has(eventId)) render();
+    // Re-render if this match is on screen: expanded in a list, or the live
+    // tab (where live matches are force-expanded but not in state.expanded).
+    if (state.expanded.has(eventId) || state.filter === 'live') render();
+    updatePredictionsChip(); // MOTM bonus may now resolve
   } catch (err) {
     state.stats[eventId] = {
       error: 'Could not load stats.',
       fetchedAt: Date.now(),
     };
-    if (state.expanded.has(eventId)) render();
+    if (state.expanded.has(eventId) || state.filter === 'live') render();
   }
 }
 
@@ -2253,6 +2473,23 @@ function renderGroupsView() {
 }
 
 function render() {
+  if (state.filter === 'live') {
+    const live = state.events.filter((e) => e.state === 'in');
+    if (!live.length) {
+      matchesEl.innerHTML = `<p class="empty">No live match right now. The LIVE tab appears whenever a game is in progress.</p>`;
+    } else {
+      matchesEl.innerHTML =
+        `<section class="day live-only">` +
+        live.map((e) => matchCard(e, { hero: true, forceExpand: true })).join('') +
+        `</section>`;
+      for (const e of live) ensureStats(e.id);
+    }
+    applyEntranceAnimation();
+    updateLivePolling();
+    updateNextBanner();
+    updatePredictionsChip();
+    return;
+  }
   if (state.filter === 'groups') {
     renderGroupsView();
     updateLivePolling();
@@ -2380,3 +2617,4 @@ function render() {
 ensurePhotoDb();
 load();
 ensureStandings();
+syncLiveTab();
