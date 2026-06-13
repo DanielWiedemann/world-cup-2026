@@ -161,30 +161,32 @@ nextBannerEl.addEventListener('click', () => {
 });
 
 // --- Swipe between tabs (touch) ------------------------------------------
-// Horizontal flick anywhere in the main area changes tab in the order shown
-// in the filters bar. Guards: dialog open, gesture started inside a
-// horizontal scroller (bracket / MOTM rows / filter bar), or dominantly
-// vertical motion (regular scrolling wins).
+// Finger-tracking horizontal swipe on the main area changes tab in the
+// order shown in the filters bar. Content follows the finger in real time
+// with rubber-band resistance, then either glides to commit the new tab or
+// snaps back. Wraps around at both ends. Guards: dialog open, gesture
+// started inside a horizontal scroller, or dominantly vertical motion.
 (() => {
-  // Enable on any device that has a touch surface — `ontouchstart` is the
-  // common signal but some Android Chrome / iPad WebView builds only set
-  // maxTouchPoints. Desktop returns 0 for both.
   if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
-  const THRESHOLD = 50; // px of horizontal travel to count as a swipe
-  const SLOPE = 1.4; // |dx| must be >= |dy| * SLOPE
-  const VERTICAL_LIMIT = 80; // px — if vertical travel exceeds this, bail
+
+  const COMMIT_RATIO = 0.30; // |dx| > 30% of viewport width commits
+  const SLOPE = 1.4; // |dx| must be >= |dy| * SLOPE to engage
+  const VERTICAL_LIMIT = 80;
+
   let startX = 0;
   let startY = 0;
+  let lastX = 0;
+  let lastT = 0;
+  let velocity = 0; // px/ms, positive = moving right
   let active = false;
-  let armed = false;
+  let engaged = false; // committed to tracking horizontally
   let cancelled = false;
+  let width = 0;
 
   function inHorizontalScroller(el) {
     let n = el;
     while (n && n !== document.body) {
       if (n.nodeType === 1) {
-        // Don't fire if the gesture starts inside a sub-region that already
-        // scrolls horizontally on its own.
         if (
           n.classList?.contains('bracket-wrap') ||
           n.classList?.contains('motm-scroll') ||
@@ -208,37 +210,60 @@ nextBannerEl.addEventListener('click', () => {
     );
   }
 
-  function step(dir) {
+  // Pick the next tab (with wrap-around) and commit, with a clean slide.
+  function commit(dir) {
     const tabs = tabsInOrder();
     const i = tabs.indexOf(state.filter);
-    const next = tabs[i + dir];
+    const next = tabs[(i + dir + tabs.length) % tabs.length]; // loops
     if (!next) return;
-    setFilter(next);
-    // Tiny enter-from-side animation cue.
-    matchesEl.classList.remove('swipe-from-l', 'swipe-from-r');
-    void matchesEl.offsetWidth;
-    matchesEl.classList.add(dir > 0 ? 'swipe-from-r' : 'swipe-from-l');
+    // Outgoing slide of the OLD content all the way off screen, then render
+    // the new tab and slide it in from the opposite side.
+    matchesEl.classList.add('swipe-glide');
+    matchesEl.style.transform = `translateX(${dir > 0 ? -width : width}px)`;
+    matchesEl.style.opacity = '0';
+    setTimeout(() => {
+      setFilter(next);
+      // Start incoming from the opposite edge…
+      matchesEl.classList.remove('swipe-glide');
+      matchesEl.style.transform = `translateX(${dir > 0 ? width : -width}px)`;
+      matchesEl.style.opacity = '0';
+      // …force layout, then glide back to centre.
+      void matchesEl.offsetWidth;
+      matchesEl.classList.add('swipe-glide');
+      matchesEl.style.transform = '';
+      matchesEl.style.opacity = '';
+      setTimeout(() => matchesEl.classList.remove('swipe-glide'), 260);
+    }, 180);
     try { navigator.vibrate?.(15); } catch {}
+  }
+
+  // Rubber-band release: animate back to center.
+  function snapBack() {
+    matchesEl.classList.add('swipe-glide');
+    matchesEl.style.transform = '';
+    matchesEl.style.opacity = '';
+    setTimeout(() => matchesEl.classList.remove('swipe-glide'), 240);
   }
 
   document.addEventListener(
     'touchstart',
     (e) => {
       if (e.touches.length !== 1) return;
-      // No swipes inside open dialogs.
       if (document.querySelector('dialog[open]')) return;
       const t = e.touches[0];
-      const target = e.target;
-      if (inHorizontalScroller(target)) return;
-      // Pull-to-refresh only fires on vertical-dominant motion, and we only
-      // accept horizontal-dominant motion below — so they coexist fine even
-      // at scrollY 0. (Earlier scrollY guard wrongly blocked swipes at the
-      // top of the page, which is most of the time.)
-      startX = t.clientX;
+      if (inHorizontalScroller(t.target || e.target)) return;
+      startX = lastX = t.clientX;
       startY = t.clientY;
+      lastT = e.timeStamp || performance.now();
+      velocity = 0;
       active = true;
-      armed = false;
+      engaged = false;
       cancelled = false;
+      width = window.innerWidth;
+      // Cancel any in-flight transform from a previous swipe.
+      matchesEl.classList.remove('swipe-glide');
+      matchesEl.style.transform = '';
+      matchesEl.style.opacity = '';
     },
     { passive: true }
   );
@@ -248,12 +273,38 @@ nextBannerEl.addEventListener('click', () => {
     (e) => {
       if (!active || cancelled) return;
       const t = e.touches[0];
+      const now = e.timeStamp || performance.now();
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      if (Math.abs(dy) > VERTICAL_LIMIT) { cancelled = true; return; }
-      if (!armed && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * SLOPE) {
-        armed = true;
+      // Bail if it's clearly a vertical scroll.
+      if (Math.abs(dy) > VERTICAL_LIMIT) {
+        cancelled = true;
+        if (engaged) snapBack();
+        engaged = false;
+        return;
       }
+      if (!engaged) {
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * SLOPE) {
+          engaged = true;
+        } else return;
+      }
+      // Track velocity for flick detection.
+      const dt = Math.max(1, now - lastT);
+      velocity = (t.clientX - lastX) / dt;
+      lastX = t.clientX;
+      lastT = now;
+      // Rubber-band: 1:1 follow up to ~half the viewport, then dampen.
+      const half = width / 2;
+      const sign = dx < 0 ? -1 : 1;
+      const mag = Math.abs(dx);
+      const tracked =
+        mag <= half ? mag : half + (mag - half) * 0.35;
+      const x = sign * tracked;
+      // Slight fade as the swipe gets bigger, so the upcoming tab feels
+      // 'underneath' (we don't actually render a peek, but the cue helps).
+      const opacity = Math.max(0.45, 1 - Math.abs(x) / (width * 1.1));
+      matchesEl.style.transform = `translateX(${x}px)`;
+      matchesEl.style.opacity = String(opacity);
     },
     { passive: true }
   );
@@ -263,14 +314,31 @@ nextBannerEl.addEventListener('click', () => {
     (e) => {
       if (!active) return;
       active = false;
-      if (cancelled || !armed) return;
+      if (!engaged) return;
+      engaged = false;
       const t = e.changedTouches[0];
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      if (Math.abs(dy) > VERTICAL_LIMIT) return;
-      if (Math.abs(dx) < THRESHOLD) return;
-      if (Math.abs(dx) < Math.abs(dy) * SLOPE) return;
-      step(dx < 0 ? +1 : -1); // swipe LEFT goes to next tab (rightward)
+      if (Math.abs(dy) > VERTICAL_LIMIT) { snapBack(); return; }
+      // Commit if dragged far enough OR flicked fast enough in same direction.
+      const passedThreshold = Math.abs(dx) > width * COMMIT_RATIO;
+      const flick = Math.abs(velocity) > 0.5 && Math.sign(velocity) === Math.sign(dx);
+      if (passedThreshold || flick) {
+        commit(dx < 0 ? +1 : -1); // swipe LEFT = next tab (rightward)
+      } else {
+        snapBack();
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    'touchcancel',
+    () => {
+      if (!active) return;
+      active = false;
+      if (engaged) snapBack();
+      engaged = false;
     },
     { passive: true }
   );
@@ -2526,7 +2594,7 @@ function updateNextBanner() {
   const showHours = h > 0;
   const block = (val, unit) => `
     <div class="next-block">
-      <div class="next-num">${val}</div>
+      <div class="next-num"><span class="next-num-cur">${val}</span></div>
       <div class="next-unit">${unit}</div>
     </div>`;
   const countdownHtml = showHours
@@ -2556,13 +2624,30 @@ function updateNextBanner() {
     const nums = nextBannerEl.querySelectorAll('.next-num');
     const vals = showHours ? [hh, mm, ss] : [mm, ss];
     nums.forEach((el, i) => {
-      if (el.textContent !== vals[i]) {
-        el.textContent = vals[i];
-        // Replay a tiny pop animation on the digit that changed.
-        el.classList.remove('tick');
-        void el.offsetWidth;
-        el.classList.add('tick');
-      }
+      const cur = el.querySelector('.next-num-cur');
+      const prevVal = cur?.textContent ?? el.textContent;
+      const nextVal = vals[i];
+      if (prevVal === nextVal) return;
+      // Flip-card roll: clone the current digit as the 'old' layer, drop
+      // the new digit into the 'cur' layer, then let CSS animate them.
+      const oldLayer = document.createElement('span');
+      oldLayer.className = 'next-num-old';
+      oldLayer.textContent = prevVal;
+      // Reset any in-flight animation, then start fresh.
+      el.classList.remove('flipping');
+      // Drop any stale old-layer from a prior animation still in-flight.
+      el.querySelectorAll('.next-num-old').forEach((n) => n.remove());
+      if (cur) cur.textContent = nextVal;
+      else el.innerHTML = `<span class="next-num-cur">${nextVal}</span>`;
+      el.appendChild(oldLayer);
+      // Force reflow so the new keyframes restart cleanly.
+      void el.offsetWidth;
+      el.classList.add('flipping');
+      // Clean up the old layer once the roll finishes (matches 0.45s anim).
+      setTimeout(() => {
+        oldLayer.remove();
+        el.classList.remove('flipping');
+      }, 460);
     });
   }
 }

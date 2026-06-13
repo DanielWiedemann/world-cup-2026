@@ -283,12 +283,48 @@ html, body {
   min-width: 58px;
 }
 .next-num {
+  position: relative;
+  display: inline-block;
   font-size: 44px;
   font-weight: 800;
   line-height: 1;
+  height: 44px; /* lock height so nothing shifts during digit change */
+  width: 58px; /* two digits at 44px with tight letter-spacing */
   letter-spacing: -0.02em;
   color: #fff;
   text-shadow: 0 2px 14px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  text-align: center;
+}
+/* The new digit slides up from below while the previous one fades up and
+   out — JS clones the current digit into .next-num-old just before
+   updating the textContent. Both layers sit absolutely inside .next-num
+   so the block doesn't shift the rest of the row. */
+.next-num-old,
+.next-num > span.next-num-cur {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.next-num.flipping .next-num-cur {
+  animation: digit-roll-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.next-num.flipping .next-num-old {
+  animation: digit-roll-out 0.45s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+@keyframes digit-roll-in {
+  0%   { transform: translateY(100%); opacity: 0; filter: blur(2px); }
+  60%  { transform: translateY(0); opacity: 1; filter: blur(0); }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes digit-roll-out {
+  0%   { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-110%); opacity: 0; filter: blur(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .next-num.flipping .next-num-cur,
+  .next-num.flipping .next-num-old { animation: none; }
 }
 .next-unit {
   margin-top: 6px;
@@ -712,20 +748,21 @@ html, body {
    empty dialog skeleton stuck at the bottom of the page. */
 dialog:not([open]) { display: none !important; }
 
-/* Subtle slide-in cue when the user swipes to change tabs. */
-#matches.swipe-from-r { animation: swipe-in-r 0.24s ease-out; }
-#matches.swipe-from-l { animation: swipe-in-l 0.24s ease-out; }
-@keyframes swipe-in-r {
-  from { opacity: 0.4; transform: translateX(28px); }
-  to   { opacity: 1; transform: none; }
+/* Finger-tracking swipe between tabs. The matches container is the only
+   thing that moves; the surrounding page background matches the body so
+   nothing alien shows at the edges during a swipe. */
+#matches {
+  will-change: transform;
+  /* The transform reads from inline style during a drag; this class adds
+     the easing curve only during the release/commit phase. */
 }
-@keyframes swipe-in-l {
-  from { opacity: 0.4; transform: translateX(-28px); }
-  to   { opacity: 1; transform: none; }
+#matches.swipe-glide {
+  transition:
+    transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.22s ease-out;
 }
 @media (prefers-reduced-motion: reduce) {
-  #matches.swipe-from-r,
-  #matches.swipe-from-l { animation: none; }
+  #matches.swipe-glide { transition: none; }
 }
 
 .player-dialog {
@@ -1187,11 +1224,6 @@ dialog:not([open]) { display: none !important; }
 .mi-sep { opacity: 0.5; }
 
 /* Next-banner digit pop on change */
-.next-num.tick { animation: num-pop 0.35s ease; }
-@keyframes num-pop {
-  0%   { transform: translateY(-5px); opacity: 0.35; }
-  100% { transform: none; opacity: 1; }
-}
 
 /* --- Groups (standings) view --- */
 .groups-grid {
@@ -1825,7 +1857,6 @@ tr.qual-direct .gt-name { color: var(--text); }
 @media (prefers-reduced-motion: reduce) {
   .card-in,
   .match.goal-flash,
-  .next-num.tick,
   .skeleton-card,
   .skeleton-line,
   .app-header::after,
