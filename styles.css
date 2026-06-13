@@ -712,6 +712,22 @@ html, body {
    empty dialog skeleton stuck at the bottom of the page. */
 dialog:not([open]) { display: none !important; }
 
+/* Subtle slide-in cue when the user swipes to change tabs. */
+#matches.swipe-from-r { animation: swipe-in-r 0.24s ease-out; }
+#matches.swipe-from-l { animation: swipe-in-l 0.24s ease-out; }
+@keyframes swipe-in-r {
+  from { opacity: 0.4; transform: translateX(28px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes swipe-in-l {
+  from { opacity: 0.4; transform: translateX(-28px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #matches.swipe-from-r,
+  #matches.swipe-from-l { animation: none; }
+}
+
 .player-dialog {
   border: 0;
   padding: 0;

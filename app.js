@@ -160,6 +160,122 @@ nextBannerEl.addEventListener('click', () => {
   });
 });
 
+// --- Swipe between tabs (touch) ------------------------------------------
+// Horizontal flick anywhere in the main area changes tab in the order shown
+// in the filters bar. Guards: dialog open, gesture started inside a
+// horizontal scroller (bracket / MOTM rows / filter bar), or dominantly
+// vertical motion (regular scrolling wins).
+(() => {
+  // Enable on any device that has a touch surface — `ontouchstart` is the
+  // common signal but some Android Chrome / iPad WebView builds only set
+  // maxTouchPoints. Desktop returns 0 for both.
+  if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
+  const THRESHOLD = 50; // px of horizontal travel to count as a swipe
+  const SLOPE = 1.4; // |dx| must be >= |dy| * SLOPE
+  const VERTICAL_LIMIT = 80; // px — if vertical travel exceeds this, bail
+  let startX = 0;
+  let startY = 0;
+  let active = false;
+  let armed = false;
+  let cancelled = false;
+
+  function inHorizontalScroller(el) {
+    let n = el;
+    while (n && n !== document.body) {
+      if (n.nodeType === 1) {
+        // Don't fire if the gesture starts inside a sub-region that already
+        // scrolls horizontally on its own.
+        if (
+          n.classList?.contains('bracket-wrap') ||
+          n.classList?.contains('motm-scroll') ||
+          n.classList?.contains('filters') ||
+          n.classList?.contains('motm-picker')
+        ) return true;
+        const s = getComputedStyle(n);
+        if (
+          (s.overflowX === 'auto' || s.overflowX === 'scroll') &&
+          n.scrollWidth > n.clientWidth + 2
+        ) return true;
+      }
+      n = n.parentNode;
+    }
+    return false;
+  }
+
+  function tabsInOrder() {
+    return Array.from(document.querySelectorAll('.filters .filter')).map(
+      (b) => b.dataset.filter
+    );
+  }
+
+  function step(dir) {
+    const tabs = tabsInOrder();
+    const i = tabs.indexOf(state.filter);
+    const next = tabs[i + dir];
+    if (!next) return;
+    setFilter(next);
+    // Tiny enter-from-side animation cue.
+    matchesEl.classList.remove('swipe-from-l', 'swipe-from-r');
+    void matchesEl.offsetWidth;
+    matchesEl.classList.add(dir > 0 ? 'swipe-from-r' : 'swipe-from-l');
+    try { navigator.vibrate?.(15); } catch {}
+  }
+
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 1) return;
+      // No swipes inside open dialogs.
+      if (document.querySelector('dialog[open]')) return;
+      const t = e.touches[0];
+      const target = e.target;
+      if (inHorizontalScroller(target)) return;
+      // Pull-to-refresh only fires on vertical-dominant motion, and we only
+      // accept horizontal-dominant motion below — so they coexist fine even
+      // at scrollY 0. (Earlier scrollY guard wrongly blocked swipes at the
+      // top of the page, which is most of the time.)
+      startX = t.clientX;
+      startY = t.clientY;
+      active = true;
+      armed = false;
+      cancelled = false;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!active || cancelled) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dy) > VERTICAL_LIMIT) { cancelled = true; return; }
+      if (!armed && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * SLOPE) {
+        armed = true;
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    'touchend',
+    (e) => {
+      if (!active) return;
+      active = false;
+      if (cancelled || !armed) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dy) > VERTICAL_LIMIT) return;
+      if (Math.abs(dx) < THRESHOLD) return;
+      if (Math.abs(dx) < Math.abs(dy) * SLOPE) return;
+      step(dx < 0 ? +1 : -1); // swipe LEFT goes to next tab (rightward)
+    },
+    { passive: true }
+  );
+})();
+
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && hasActiveMatches()) livePoll();
   updateLivePolling();
