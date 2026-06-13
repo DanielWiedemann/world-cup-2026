@@ -150,6 +150,22 @@ html, body {
    .filter-indicator, so we drop the solid background here. */
 .filter.active { background: transparent; color: var(--accent-deep); }
 
+/* LIVE mode: while the LIVE tab is selected, the whole shell goes red —
+   header, status bar (theme-color via JS) and a pulsing glow — not just the
+   match card below. */
+body.live-mode .app-header {
+  background: linear-gradient(180deg, #e01228 0%, #7c0b15 100%);
+  border-bottom-color: rgba(0, 0, 0, 0.25);
+  animation: live-header-glow 2.2s ease-in-out infinite;
+}
+@keyframes live-header-glow {
+  0%, 100% { box-shadow: 0 2px 14px rgba(224, 18, 40, 0.4); }
+  50% { box-shadow: 0 5px 28px rgba(224, 18, 40, 0.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.live-mode .app-header { animation: none; }
+}
+
 /* LIVE tab — red, vibrant, pulsing. Appears only while a match is on. */
 .filter-live {
   background: var(--live);
@@ -1651,7 +1667,16 @@ tr.qual-direct .gt-name { color: var(--text); }
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   font-variant-numeric: tabular-nums;
 }
-.predl-match { font-weight: 700; }
+.predl-match {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.predl-flag { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+.predl-abbr { font-variant-numeric: tabular-nums; }
+.predl-v { color: var(--muted); font-weight: 600; margin: 0 1px; }
 .predl-pred { color: var(--muted); }
 .predl-actual { color: var(--muted); font-size: 12px; }
 .predl-pts { font-weight: 800; }
@@ -1711,8 +1736,24 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 .tf-day { color: var(--muted); font-size: 11.5px; min-width: 46px; font-variant-numeric: tabular-nums; }
 .tf-ha { color: var(--muted); font-size: 11px; min-width: 16px; }
-.tf-logo { width: 18px; height: 18px; object-fit: contain; }
-.tf-opp { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tf-team {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tf-team[data-team-abbr] { cursor: pointer; }
+/* Dotted underline signals the opponent is tappable (→ their team sheet). */
+.tf-team[data-team-abbr] .tf-opp {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.tf-team[data-team-abbr]:hover .tf-opp,
+.tf-team[data-team-abbr]:active .tf-opp { text-decoration-style: solid; }
+.tf-logo { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+.tf-opp { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tf-time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .tf-score { font-weight: 800; font-variant-numeric: tabular-nums; }
 .tf-score.live { color: var(--live); }

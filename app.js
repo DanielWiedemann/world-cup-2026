@@ -2021,9 +2021,17 @@ predictionsChip?.addEventListener('click', () => {
       const motmHtml = p.motm
         ? `<span class="predl-motm">⭐ ${escapeHtml(p.motm.name.split(' ').pop())}</span>`
         : '';
+      const flag = (t) =>
+        t?.logo
+          ? `<img class="predl-flag" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
+          : '';
       return `
         <div class="predl-row">
-          <span class="predl-match">${escapeHtml(e.home?.abbr || '?')} v ${escapeHtml(e.away?.abbr || '?')}</span>
+          <span class="predl-match">
+            ${flag(e.home)}<span class="predl-abbr">${escapeHtml(e.home?.abbr || '?')}</span>
+            <span class="predl-v">v</span>
+            ${flag(e.away)}<span class="predl-abbr">${escapeHtml(e.away?.abbr || '?')}</span>
+          </span>
           <span class="predl-pred">🎯 ${p.h}–${p.a} ${motmHtml}</span>
           <span class="predl-actual">${escapeHtml(actual)}</span>
           ${ptsHtml}
@@ -2099,12 +2107,16 @@ async function openTeamDialog(abbr) {
           : `<span class="tf-score${e.state === 'in' ? ' live' : ''}">${escapeHtml(e.home?.score)}–${escapeHtml(e.away?.score)}</span>`;
       const day = new Date(e.date).toLocaleDateString([], { month: 'short', day: 'numeric' });
       const res = resultLetter(e, abbr);
+      // The opponent is tappable → jump straight to their team sheet.
+      const oppClickable = opp?.abbr ? ` data-team-abbr="${escapeHtml(opp.abbr)}" role="button" tabindex="0"` : '';
       return `
         <div class="tf-row">
           <span class="tf-day">${escapeHtml(day)}</span>
           <span class="tf-ha">${isHome ? 'vs' : '@'}</span>
-          ${opp?.logo ? `<img class="tf-logo" src="${escapeHtml(opp.logo)}" alt="" loading="lazy" />` : ''}
-          <span class="tf-opp">${escapeHtml(opp?.short || opp?.name || 'TBD')}</span>
+          <span class="tf-team"${oppClickable}>
+            ${opp?.logo ? `<img class="tf-logo" src="${escapeHtml(opp.logo)}" alt="" loading="lazy" />` : ''}
+            <span class="tf-opp">${escapeHtml(opp?.short || opp?.name || 'TBD')}</span>
+          </span>
           ${mid}
           ${res}
         </div>`;
@@ -2160,6 +2172,13 @@ teamDialog?.addEventListener('click', (e) => {
   const chip = e.target.closest('[data-player-photo]');
   if (chip) {
     openPlayerDialog(chip.dataset);
+    return;
+  }
+  // Opponent in the fixtures list → swap this dialog to that team.
+  const teamLink = e.target.closest('[data-team-abbr]');
+  if (teamLink && teamLink.dataset.teamAbbr) {
+    e.stopPropagation();
+    openTeamDialog(teamLink.dataset.teamAbbr);
     return;
   }
   const rect = teamDialog.getBoundingClientRect();
@@ -2896,32 +2915,19 @@ function listHTML() {
       ? `<p class="empty">No matches match this filter.</p>`
       : skeletonList();
   }
-  const liveEvents = filtered.filter((e) => e.state === 'in');
-  const otherEvents = filtered.filter((e) => e.state !== 'in');
-  // First live match renders as a big team-colour hero; the rest as cards.
-  const liveSection = liveEvents.length
-    ? `<section class="day live-now">
-         <h2 class="day-header live-header">
-           <span class="pulse-dot" aria-hidden="true"></span>Live now
-         </h2>
-         ${matchCard(liveEvents[0], { hero: true })}
-         ${liveEvents.slice(1).map((x) => matchCard(x)).join('')}
-       </section>`
-    : '';
-  const groups = groupByDay(otherEvents);
-  return (
-    liveSection +
-    groups
-      .map(
-        ([day, evs]) => `
+  // Live matches stay in their normal day group as ordinary (live-styled)
+  // cards — the dedicated red "Live now" hero only lives in the LIVE tab now.
+  const groups = groupByDay(filtered);
+  return groups
+    .map(
+      ([day, evs]) => `
       <section class="day">
         <h2 class="day-header">${escapeHtml(formatDayLabel(day))}</h2>
         ${evs.map(matchCard).join('')}
       </section>
     `
-      )
-      .join('')
-  );
+    )
+    .join('');
 }
 
 // Build the markup for ANY tab from current state, with no side effects.
@@ -2943,7 +2949,16 @@ function viewHTML(filter) {
   }
 }
 
+// Paint the whole shell red while the LIVE tab is active (header, pills,
+// status bar) — not just the match cards.
+function setLiveMode(on) {
+  document.body.classList.toggle('live-mode', on);
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) themeMeta.content = on ? '#b00d1c' : '#0c5c3c';
+}
+
 function render() {
+  setLiveMode(state.filter === 'live');
   if (state.filter === 'live') {
     matchesEl.innerHTML = liveHTML();
     for (const e of state.events.filter((x) => x.state === 'in')) ensureStats(e.id);
