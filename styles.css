@@ -707,6 +707,11 @@ html, body {
 .card.red    { background: #d83838; }
 
 /* Player overlay dialog */
+/* Bulletproof: a closed <dialog> must never render in normal flow. This
+   defeats any base display rule (and any stale cache) that could leave an
+   empty dialog skeleton stuck at the bottom of the page. */
+dialog:not([open]) { display: none !important; }
+
 .player-dialog {
   border: 0;
   padding: 0;
@@ -1402,20 +1407,35 @@ tr.qual-direct .gt-name { color: var(--text); }
   font-size: 10.5px;
 }
 .motm-team-label {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  margin: 12px 2px 2px;
+}
+.motm-pos-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.motm-pos-label {
+  flex: 0 0 30px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   color: var(--muted);
-  margin: 6px 2px 4px;
+  text-align: right;
 }
 .motm-scroll {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 6px;
+  padding: 4px 0 6px;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
+  flex: 1;
+  min-width: 0;
 }
 .motm-chip {
   flex: 0 0 auto;
@@ -1500,6 +1520,7 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 .pred-chip.won { background: color-mix(in srgb, var(--accent) 20%, var(--surface-2)); border-color: var(--accent); }
 .pred-chip.lost { opacity: 0.6; }
+.pred-chip-motm { color: #ffd45c; }
 
 .predictions-chip {
   border: 1px solid rgba(255,255,255,0.25);

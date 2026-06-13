@@ -147,6 +147,19 @@ refreshBtn.addEventListener('click', () => {
   if (state.filter === 'scorers') ensureScorers(true);
 });
 
+// Tapping the Next Match banner expands that match's card (same as tapping it
+// in the list), then scrolls to it.
+nextBannerEl.addEventListener('click', () => {
+  const id = nextBannerEl.dataset.eventId;
+  if (!id) return;
+  state.expanded.add(id);
+  render();
+  requestAnimationFrame(() => {
+    const card = matchesEl.querySelector(`.match[data-event-id="${CSS.escape(id)}"]`);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+});
+
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && hasActiveMatches()) livePoll();
   updateLivePolling();
@@ -228,7 +241,7 @@ const playerDialogMeta = $('#player-dialog-meta');
 const playerDialogClose = $('#player-dialog-close');
 
 function openPlayerDialog(data) {
-  if (!playerDialog) return;
+  if (!playerDialog || !data || !data.playerPhoto) return; // never open an empty shell
   playerDialogPhoto.src = data.playerPhoto;
   playerDialogPhoto.alt = data.playerName || '';
   playerDialogName.textContent = data.playerName || '';
@@ -236,6 +249,7 @@ function openPlayerDialog(data) {
   const pos = POSITION_LONG[data.playerPos] || data.playerPos || '';
   const jersey = data.playerJersey ? `#${data.playerJersey}` : '';
   playerDialogMeta.textContent = [team, pos, jersey].filter(Boolean).join(' · ');
+  if (playerDialog.open) playerDialog.close();
   if (typeof playerDialog.showModal === 'function') playerDialog.showModal();
 }
 
@@ -1021,9 +1035,11 @@ function flagWatermarks(e) {
 function predictionChip(e) {
   if (e.state === 'pre') {
     const p = getPrediction(e.id);
-    return p
-      ? `<span class="pred-chip">🎯 ${p.h}–${p.a}</span>`
+    if (!p) return '';
+    const motm = p.motm
+      ? ` <span class="pred-chip-motm">⭐ ${escapeHtml(p.motm.name.split(' ').pop())}</span>`
       : '';
+    return `<span class="pred-chip">🎯 ${p.h}–${p.a}${motm}</span>`;
   }
   // live or post: show running points if a call was made
   const total = predictionTotal(e);
@@ -1492,13 +1508,53 @@ function resolvePredictionStats() {
   }
 }
 
+const POS_RANK = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+function posShort(position) {
+  if (/goalkeeper/i.test(position)) return 'GK';
+  if (/defender/i.test(position)) return 'DEF';
+  if (/forward/i.test(position)) return 'FWD';
+  return 'MID';
+}
+
 function squadList(abbr) {
   const gName = ABBR_TO_GUARDIAN[abbr];
   const squad = photoDb && gName ? photoDb[gName] : null;
   if (!squad) return [];
   return Object.entries(squad)
-    .map(([num, p]) => ({ num: parseInt(num, 10), name: p.name, photo: p.photo }))
-    .sort((a, b) => a.num - b.num);
+    .map(([num, p]) => ({
+      num: parseInt(num, 10),
+      name: p.name,
+      photo: p.photo,
+      position: p.position || '',
+      pos: posShort(p.position || ''),
+    }))
+    // Order like a team sheet: GK → DEF → MID → FWD, then by shirt number.
+    .sort((a, b) => POS_RANK[a.pos] - POS_RANK[b.pos] || a.num - b.num);
+}
+
+// Build one team's MOTM picker, grouped into positional rows so it reads
+// like a lineup (no confirmed XI exists pre-match, so we group the squad).
+function motmTeamSection(e, team, squad, motm) {
+  if (!squad.length) return '';
+  const abbr = team.abbr;
+  const groups = [
+    ['GK', 'Goalkeepers'],
+    ['DEF', 'Defenders'],
+    ['MID', 'Midfielders'],
+    ['FWD', 'Forwards'],
+  ];
+  const rows = groups
+    .map(([key, label]) => {
+      const players = squad.filter((pl) => pl.pos === key);
+      if (!players.length) return '';
+      return `
+        <div class="motm-pos-row">
+          <span class="motm-pos-label">${label}</span>
+          <div class="motm-scroll">${players.map((pl) => motmChip(e, abbr, pl, motm)).join('')}</div>
+        </div>`;
+    })
+    .join('');
+  return `<div class="motm-team-label">${escapeHtml(team.short || team.abbr || '')}</div>${rows}`;
 }
 
 function motmChip(e, abbr, pl, motm) {
@@ -1506,7 +1562,7 @@ function motmChip(e, abbr, pl, motm) {
   const inner = pl.photo
     ? `<img src="${escapeHtml(pl.photo)}" alt="" loading="lazy" />`
     : `<span class="motm-num">${pl.num}</span>`;
-  return `<button type="button" class="motm-chip${sel ? ' selected' : ''}" data-ev="${escapeHtml(e.id)}" data-abbr="${escapeHtml(abbr)}" data-jersey="${pl.num}" data-name="${escapeHtml(pl.name)}">
+  return `<button type="button" class="motm-chip${sel ? ' selected' : ''}" data-ev="${escapeHtml(e.id)}" data-abbr="${escapeHtml(abbr)}" data-jersey="${pl.num}" data-name="${escapeHtml(pl.name)}" title="${escapeHtml(pl.name)} · #${pl.num}">
     ${inner}
     <span class="motm-name">${escapeHtml(pl.name.split(' ').pop())}</span>
   </button>`;
@@ -1533,10 +1589,8 @@ function renderPredictionPanel(e) {
       ? `
     <div class="motm-picker">
       <h4 class="motm-title">⭐ Man of the Match <span class="motm-bonus">+2 if they score</span></h4>
-      ${homeSquad.length ? `<div class="motm-team-label">${escapeHtml(e.home?.short || e.home?.abbr || '')}</div>
-      <div class="motm-scroll">${homeSquad.map((pl) => motmChip(e, e.home.abbr, pl, motm)).join('')}</div>` : ''}
-      ${awaySquad.length ? `<div class="motm-team-label">${escapeHtml(e.away?.short || e.away?.abbr || '')}</div>
-      <div class="motm-scroll">${awaySquad.map((pl) => motmChip(e, e.away.abbr, pl, motm)).join('')}</div>` : ''}
+      ${motmTeamSection(e, e.home, homeSquad, motm)}
+      ${motmTeamSection(e, e.away, awaySquad, motm)}
     </div>`
       : '';
   return `
@@ -2309,6 +2363,12 @@ function mapStats(arr) {
 
 function updateNextBanner() {
   if (!nextBannerEl) return;
+  // The Next Match banner belongs to the Upcoming tab only.
+  if (state.filter !== 'upcoming') {
+    nextBannerEl.hidden = true;
+    nextBannerEl.dataset.sig = ''; // force a rebuild when we return to Upcoming
+    return;
+  }
   const now = Date.now();
   const next = state.events.find(
     (e) => e.state === 'pre' && new Date(e.date).getTime() > now
@@ -2360,6 +2420,7 @@ function updateNextBanner() {
   // transitions. So: build the static frame once per match change, then
   // only patch the .next-num values on subsequent ticks.
   const sig = `${next.id}|${showHours}`;
+  nextBannerEl.dataset.eventId = next.id; // for click-to-open
   if (nextBannerEl.dataset.sig !== sig) {
     nextBannerEl.hidden = false;
     nextBannerEl.dataset.sig = sig;
