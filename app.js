@@ -97,6 +97,11 @@ state.scorers = loadScorersCache();
 // tab) work too.
 const filtersBar = document.querySelector('.filters');
 let userNavigated = false;
+// True while a swipe carousel is on screen. The swipe caches its prev/next
+// tabs up front, so we must not let a background poll reorder the tab bar
+// (e.g. insert/remove the LIVE tab) mid-gesture and strand the commit on a
+// tab that no longer exists.
+let swipeActive = false;
 filtersBar.addEventListener('click', (ev) => {
   const btn = ev.target.closest('.filter');
   if (!btn) return;
@@ -112,13 +117,79 @@ function setFilter(filter) {
   );
   if (filter === 'scorers') ensureScorers();
   if (filter === 'groups') ensureStandings();
-  render();
+  render(); // also repositions the tab indicator
+  // Keep the active tab (and the bubble that lands on it) in view.
+  const ab = filtersBar.querySelector('.filter.active');
+  ab?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+}
+
+// The white "bubble" behind the active tab. updateIndicator() parks it under
+// the active pill; morphIndicator() drives it mid-swipe so it stretches to
+// bridge the current and incoming tabs, then settles on the target.
+function updateIndicator(animate) {
+  const track = filtersBar.querySelector('.filters-track');
+  if (!track) return;
+  const ind = track.querySelector('.filter-indicator');
+  const activeBtn = track.querySelector('.filter.active');
+  if (!ind || !activeBtn) return;
+  const firstShow = ind.style.opacity !== '1';
+  if (!animate || firstShow) ind.style.transition = 'none';
+  ind.style.left = activeBtn.offsetLeft + 'px';
+  ind.style.width = activeBtn.offsetWidth + 'px';
+  ind.style.opacity = '1';
+  // Drop any per-pill text colour left over from a swipe.
+  track.querySelectorAll('.filter').forEach((b) => { b.style.color = ''; });
+  if (!animate || firstShow) {
+    void ind.offsetWidth; // commit the no-transition jump before re-enabling
+    ind.style.transition = '';
+  }
+}
+
+function morphIndicator(p, dir) {
+  const track = filtersBar.querySelector('.filters-track');
+  if (!track) return;
+  const ind = track.querySelector('.filter-indicator');
+  if (!ind) return;
+  if (!dir) { updateIndicator(true); return; }
+  const tabs = Array.from(track.querySelectorAll('.filter'));
+  const curBtn = track.querySelector('.filter.active');
+  const ci = tabs.indexOf(curBtn);
+  if (ci < 0) return;
+  const ti = (ci + (dir > 0 ? 1 : -1) + tabs.length) % tabs.length;
+  const tgtBtn = tabs[ti];
+  if (!tgtBtn || tgtBtn === curBtn) return;
+  ind.style.transition = 'none';
+  ind.style.opacity = '1';
+  const a = { l: curBtn.offsetLeft, r: curBtn.offsetLeft + curBtn.offsetWidth };
+  const b = { l: tgtBtn.offsetLeft, r: tgtBtn.offsetLeft + tgtBtn.offsetWidth };
+  const eIn = (x) => x * x;
+  const eOut = (x) => 1 - (1 - x) * (1 - x);
+  // The leading edge races ahead (easeOut) while the trailing edge lags
+  // (easeIn) — that's what makes the bubble elongate to bridge both tabs,
+  // then contract onto the target.
+  const movingRight = b.l + b.r > a.l + a.r;
+  const left = movingRight
+    ? a.l + (b.l - a.l) * eIn(p)
+    : a.l + (b.l - a.l) * eOut(p);
+  const right = movingRight
+    ? a.r + (b.r - a.r) * eOut(p)
+    : a.r + (b.r - a.r) * eIn(p);
+  ind.style.left = left + 'px';
+  ind.style.width = Math.max(0, right - left) + 'px';
+  // Cross-fade text: current pill fades to white as the bubble leaves; the
+  // target darkens as it arrives. accent-deep ≈ rgb(12,92,60).
+  const W = [255, 255, 255], D = [12, 92, 60];
+  const mix = (from, to) => from.map((c, i) => Math.round(c + (to[i] - c) * p));
+  const cc = mix(D, W), tc = mix(W, D);
+  curBtn.style.color = `rgb(${cc[0]},${cc[1]},${cc[2]})`;
+  tgtBtn.style.color = `rgb(${tc[0]},${tc[1]},${tc[2]})`;
 }
 
 // The LIVE tab appears (far left, red, pulsing) only while a match is in
 // progress, and is removed when none are. It shows that match alone.
 let liveTabAutoShown = false;
 function syncLiveTab() {
+  if (swipeActive) return; // never reorder the tab bar during a swipe
   const anyLive = state.events.some((e) => e.state === 'in');
   let liveBtn = filtersBar.querySelector('.filter[data-filter="live"]');
   if (anyLive && !liveBtn) {
@@ -127,7 +198,9 @@ function syncLiveTab() {
     liveBtn.dataset.filter = 'live';
     liveBtn.setAttribute('role', 'tab');
     liveBtn.innerHTML = '<span class="live-dot"></span>LIVE';
-    filtersBar.insertBefore(liveBtn, filtersBar.firstChild);
+    const track = filtersBar.querySelector('.filters-track');
+    track.insertBefore(liveBtn, track.querySelector('.filter'));
+    updateIndicator(true); // inserting at the front shifts every tab right
     // Auto-jump to LIVE only once, and only if the user is sitting on the
     // default tab and hasn't navigated — never yank them out of a tab they
     // chose (e.g. mid-read on Groups when a match kicks off).
@@ -138,6 +211,7 @@ function syncLiveTab() {
   } else if (!anyLive && liveBtn) {
     liveBtn.remove();
     if (state.filter === 'live') setFilter('today');
+    else updateIndicator(true);
   }
 }
 
@@ -160,28 +234,28 @@ nextBannerEl.addEventListener('click', () => {
   });
 });
 
-// --- Swipe between tabs (touch) ------------------------------------------
-// Finger-tracking horizontal swipe on the main area changes tab in the
-// order shown in the filters bar. Content follows the finger in real time
-// with rubber-band resistance, then either glides to commit the new tab or
-// snaps back. Wraps around at both ends. Guards: dialog open, gesture
-// started inside a horizontal scroller, or dominantly vertical motion.
+// --- Swipe between tabs (carousel) ---------------------------------------
+// A horizontal drag shifts the current view (and the Next-match banner) with
+// the finger, while a fixed layer holds the two neighbouring tabs —
+// pre-rendered with viewHTML() — so they slide in to fill the gap. The page
+// background never shows through. Tabs wrap around at both ends. We claim the
+// horizontal gesture (touch-action: pan-y + preventDefault once engaged) so
+// Chrome's back/forward edge-swipe can't hijack it.
 (() => {
   if (!('ontouchstart' in window) && !(navigator.maxTouchPoints > 0)) return;
+  const headerEl = document.querySelector('.app-header');
 
-  const COMMIT_RATIO = 0.30; // |dx| > 30% of viewport width commits
-  const SLOPE = 1.4; // |dx| must be >= |dy| * SLOPE to engage
-  const VERTICAL_LIMIT = 80;
+  const COMMIT_RATIO = 0.3; // |dx| past 30% of the viewport commits
+  const SLOPE = 1.3; // |dx| must beat |dy| * SLOPE to engage horizontally
+  const VERTICAL_LIMIT = 70;
+  const ANIM_MS = 340; // keep in sync with .swipe-shift-anim duration
 
-  let startX = 0;
-  let startY = 0;
-  let lastX = 0;
-  let lastT = 0;
-  let velocity = 0; // px/ms, positive = moving right
-  let active = false;
-  let engaged = false; // committed to tracking horizontally
-  let cancelled = false;
-  let width = 0;
+  let startX = 0, startY = 0, lastX = 0, lastT = 0, velocity = 0;
+  let active = false, engaged = false, cancelled = false;
+  let width = 0; // viewport width (gesture distance reference)
+  let slide = 0; // content width — how far a commit travels
+  let layer = null; // fixed neighbour layer
+  let prevTab = null, nextTab = null;
 
   function inHorizontalScroller(el) {
     let n = el;
@@ -191,6 +265,7 @@ nextBannerEl.addEventListener('click', () => {
           n.classList?.contains('bracket-wrap') ||
           n.classList?.contains('motm-scroll') ||
           n.classList?.contains('filters') ||
+          n.classList?.contains('filters-track') ||
           n.classList?.contains('motm-picker')
         ) return true;
         const s = getComputedStyle(n);
@@ -210,39 +285,111 @@ nextBannerEl.addEventListener('click', () => {
     );
   }
 
-  // Pick the next tab (with wrap-around) and commit, with a clean slide.
-  function commit(dir) {
+  function neighbours() {
     const tabs = tabsInOrder();
     const i = tabs.indexOf(state.filter);
-    const next = tabs[(i + dir + tabs.length) % tabs.length]; // loops
-    if (!next) return;
-    // Outgoing slide of the OLD content all the way off screen, then render
-    // the new tab and slide it in from the opposite side.
-    matchesEl.classList.add('swipe-glide');
-    matchesEl.style.transform = `translateX(${dir > 0 ? -width : width}px)`;
-    matchesEl.style.opacity = '0';
-    setTimeout(() => {
-      setFilter(next);
-      // Start incoming from the opposite edge…
-      matchesEl.classList.remove('swipe-glide');
-      matchesEl.style.transform = `translateX(${dir > 0 ? width : -width}px)`;
-      matchesEl.style.opacity = '0';
-      // …force layout, then glide back to centre.
-      void matchesEl.offsetWidth;
-      matchesEl.classList.add('swipe-glide');
-      matchesEl.style.transform = '';
-      matchesEl.style.opacity = '';
-      setTimeout(() => matchesEl.classList.remove('swipe-glide'), 260);
-    }, 180);
-    try { navigator.vibrate?.(15); } catch {}
+    return {
+      prev: tabs[(i - 1 + tabs.length) % tabs.length],
+      next: tabs[(i + 1) % tabs.length],
+    };
   }
 
-  // Rubber-band release: animate back to center.
+  // One pane of the carousel: the tab's view, plus the Next-match banner on
+  // top when that tab is Upcoming (so the banner slides with its tab).
+  function paneInner(filter) {
+    const banner =
+      filter === 'upcoming' &&
+      nextBannerEl && !nextBannerEl.hidden && nextBannerEl.innerHTML.trim()
+        ? `<div class="next-banner pane-banner">${nextBannerEl.innerHTML}</div>`
+        : '';
+    return `${banner}<main class="matches">${viewHTML(filter)}</main>`;
+  }
+
+  function buildLayer() {
+    const top = Math.round(
+      headerEl ? headerEl.getBoundingClientRect().bottom : 0
+    );
+    // Size and place the panes to the *content* width (matches is centred
+    // with a max-width), so the neighbour butts directly against the current
+    // view with no gap — even when the viewport is wider than the content.
+    const mr = matchesEl.getBoundingClientRect();
+    slide = Math.round(mr.width) || window.innerWidth;
+    const cl = Math.round(mr.left);
+    layer = document.createElement('div');
+    layer.className = 'swipe-neighbors';
+    layer.style.top = top + 'px';
+    layer.setAttribute('aria-hidden', 'true');
+    const n = neighbours();
+    prevTab = n.prev;
+    nextTab = n.next;
+    const prev = document.createElement('div');
+    prev.className = 'swipe-pane prev';
+    prev.style.left = cl - slide + 'px';
+    prev.style.width = slide + 'px';
+    prev.innerHTML = paneInner(prevTab);
+    const next = document.createElement('div');
+    next.className = 'swipe-pane next';
+    next.style.left = cl + slide + 'px';
+    next.style.width = slide + 'px';
+    next.innerHTML = paneInner(nextTab);
+    layer.append(prev, next);
+    document.body.appendChild(layer);
+    swipeActive = true; // freeze the tab bar until this gesture resolves
+  }
+
+  function shiftEls() {
+    const els = [matchesEl];
+    if (nextBannerEl && !nextBannerEl.hidden) els.push(nextBannerEl);
+    return els;
+  }
+
+  function setShift(dx, anim) {
+    for (const el of shiftEls()) {
+      el.classList.toggle('swipe-shift-anim', !!anim);
+      el.style.transform = dx ? `translateX(${dx}px)` : '';
+    }
+    if (layer) {
+      layer.classList.toggle('anim', !!anim);
+      layer.style.transform = dx ? `translateX(${dx}px)` : '';
+    }
+  }
+
+  function clearShift() {
+    for (const el of [matchesEl, nextBannerEl]) {
+      if (!el) continue;
+      el.classList.remove('swipe-shift-anim');
+      el.style.transform = '';
+    }
+    if (layer) { layer.remove(); layer = null; }
+    swipeActive = false;
+  }
+
+  // dir +1 = next tab (content slides left), -1 = prev tab (slides right).
+  function commit(dir) {
+    const target = dir > 0 ? nextTab : prevTab;
+    setShift(dir > 0 ? -slide : slide, true);
+    morphIndicator(1, dir);
+    try { navigator.vibrate?.(12); } catch {}
+    setTimeout(() => {
+      // The neighbour pane is now centred. Render the real view (still shoved
+      // off-screen by the inline transform), then snap it back with no
+      // animation so the swap is invisible, and drop the layer.
+      swipeActive = false; // unfreeze before setFilter so syncLiveTab can run
+      window.scrollTo(0, 0);
+      setFilter(target);
+      for (const el of [matchesEl, nextBannerEl]) {
+        if (!el) continue;
+        el.classList.remove('swipe-shift-anim');
+        el.style.transform = '';
+      }
+      if (layer) { layer.remove(); layer = null; }
+    }, ANIM_MS);
+  }
+
   function snapBack() {
-    matchesEl.classList.add('swipe-glide');
-    matchesEl.style.transform = '';
-    matchesEl.style.opacity = '';
-    setTimeout(() => matchesEl.classList.remove('swipe-glide'), 240);
+    setShift(0, true);
+    morphIndicator(0, 0);
+    setTimeout(clearShift, ANIM_MS);
   }
 
   document.addEventListener(
@@ -250,6 +397,7 @@ nextBannerEl.addEventListener('click', () => {
     (e) => {
       if (e.touches.length !== 1) return;
       if (document.querySelector('dialog[open]')) return;
+      if (layer) return; // a commit/snap is still animating
       const t = e.touches[0];
       if (inHorizontalScroller(t.target || e.target)) return;
       startX = lastX = t.clientX;
@@ -260,10 +408,6 @@ nextBannerEl.addEventListener('click', () => {
       engaged = false;
       cancelled = false;
       width = window.innerWidth;
-      // Cancel any in-flight transform from a previous swipe.
-      matchesEl.classList.remove('swipe-glide');
-      matchesEl.style.transform = '';
-      matchesEl.style.opacity = '';
     },
     { passive: true }
   );
@@ -276,37 +420,30 @@ nextBannerEl.addEventListener('click', () => {
       const now = e.timeStamp || performance.now();
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
-      // Bail if it's clearly a vertical scroll.
-      if (Math.abs(dy) > VERTICAL_LIMIT) {
-        cancelled = true;
-        if (engaged) snapBack();
-        engaged = false;
-        return;
-      }
       if (!engaged) {
-        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * SLOPE) {
+        // Give up to vertical scrolling early.
+        if (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) {
+          cancelled = true;
+          return;
+        }
+        if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * SLOPE) {
           engaged = true;
-        } else return;
+          buildLayer();
+        } else {
+          return;
+        }
       }
-      // Track velocity for flick detection.
+      // We own the gesture now — block native scroll and the edge-swipe.
+      if (e.cancelable) e.preventDefault();
       const dt = Math.max(1, now - lastT);
       velocity = (t.clientX - lastX) / dt;
       lastX = t.clientX;
       lastT = now;
-      // Rubber-band: 1:1 follow up to ~half the viewport, then dampen.
-      const half = width / 2;
-      const sign = dx < 0 ? -1 : 1;
-      const mag = Math.abs(dx);
-      const tracked =
-        mag <= half ? mag : half + (mag - half) * 0.35;
-      const x = sign * tracked;
-      // Slight fade as the swipe gets bigger, so the upcoming tab feels
-      // 'underneath' (we don't actually render a peek, but the cue helps).
-      const opacity = Math.max(0.45, 1 - Math.abs(x) / (width * 1.1));
-      matchesEl.style.transform = `translateX(${x}px)`;
-      matchesEl.style.opacity = String(opacity);
+      const clamped = Math.max(-slide, Math.min(slide, dx));
+      setShift(clamped, false);
+      morphIndicator(Math.min(1, Math.abs(clamped) / slide), clamped < 0 ? 1 : -1);
     },
-    { passive: true }
+    { passive: false }
   );
 
   document.addEventListener(
@@ -318,13 +455,11 @@ nextBannerEl.addEventListener('click', () => {
       engaged = false;
       const t = e.changedTouches[0];
       const dx = t.clientX - startX;
-      const dy = t.clientY - startY;
-      if (Math.abs(dy) > VERTICAL_LIMIT) { snapBack(); return; }
-      // Commit if dragged far enough OR flicked fast enough in same direction.
-      const passedThreshold = Math.abs(dx) > width * COMMIT_RATIO;
-      const flick = Math.abs(velocity) > 0.5 && Math.sign(velocity) === Math.sign(dx);
-      if (passedThreshold || flick) {
-        commit(dx < 0 ? +1 : -1); // swipe LEFT = next tab (rightward)
+      const passed = Math.abs(dx) > (slide || width) * COMMIT_RATIO;
+      const flick =
+        Math.abs(velocity) > 0.5 && Math.sign(velocity) === Math.sign(dx);
+      if ((passed || flick) && dx !== 0) {
+        commit(dx < 0 ? 1 : -1); // swipe LEFT = next tab
       } else {
         snapBack();
       }
@@ -1410,19 +1545,16 @@ function scorerRow(p, i, statLabel) {
     </div>`;
 }
 
-function renderScorersView() {
+function scorersHTML() {
   const s = state.scorers;
   if (!s || (!s.goals?.length && !s.assists?.length)) {
-    matchesEl.innerHTML = state.scorersError
+    return state.scorersError
       ? `<p class="empty">Couldn't load scorers. Try again later.</p>`
       : `${Array.from({ length: 6 }, () => '<div class="skeleton-card"></div>').join('')}`;
-    ensureScorers();
-    return;
   }
-  ensureScorers();
   const goals = (s.goals || []).slice(0, 20);
   const assists = (s.assists || []).slice(0, 10);
-  matchesEl.innerHTML = `
+  return `
     <section class="day">
       <h2 class="day-header">👑 Golden Boot</h2>
       <div class="sc-list">
@@ -1435,7 +1567,13 @@ function renderScorersView() {
         ${assists.map((p, i) => scorerRow(p, i, 'assists')).join('') || '<p class="empty">No assists yet.</p>'}
       </div>
     </section>`;
-  applyEntranceAnimation();
+}
+
+function renderScorersView() {
+  matchesEl.innerHTML = scorersHTML();
+  ensureScorers();
+  const s = state.scorers;
+  if (s && (s.goals?.length || s.assists?.length)) applyEntranceAnimation();
 }
 
 // --- Knockout bracket --------------------------------------------------------
@@ -1547,11 +1685,10 @@ function bracketCard(e, span) {
     </div>`;
 }
 
-function renderBracketView() {
+function bracketHTML() {
   const ko = knockoutEvents();
   if (!ko.length) {
-    matchesEl.innerHTML = `<p class="empty">The knockout bracket appears once the schedule includes the Round of 32 (June 28).</p>`;
-    return;
+    return `<p class="empty">The knockout bracket appears once the schedule includes the Round of 32 (June 28).</p>`;
   }
   const byNum = {};
   for (const e of ko) {
@@ -1565,7 +1702,7 @@ function renderBracketView() {
         ${nums.map((n) => bracketCard(byNum[n], span)).join('')}
       </div>
     </div>`;
-  matchesEl.innerHTML = `
+  return `
     <div class="bracket-wrap">
       <div class="bracket">
         ${col(BRACKET_ORDER.r32, 1, 'Round of 32')}
@@ -1580,6 +1717,10 @@ function renderBracketView() {
       ${bracketCard(byNum[103], 1)}
     </div>
     <p class="groups-legend">Bracket fills in automatically as the tournament progresses · swipe to explore →</p>`;
+}
+
+function renderBracketView() {
+  matchesEl.innerHTML = bracketHTML();
 }
 
 // --- Predictions game -------------------------------------------------------
@@ -2682,16 +2823,13 @@ function qualClass(t) {
   return t.rank <= 2 ? 'qual-direct' : t.rank === 3 ? 'qual-maybe' : '';
 }
 
-function renderGroupsView() {
+function groupsHTML() {
   const s = state.standings;
   if (!s || !s.groups?.length) {
-    matchesEl.innerHTML = state.standingsError
+    return state.standingsError
       ? `<p class="empty">Couldn't load the group tables. Pull to refresh or try again later.</p>`
       : `<div class="groups-grid">${Array.from({ length: 4 }, () => '<div class="skeleton-card group-skel"></div>').join('')}</div>`;
-    ensureStandings();
-    return;
   }
-  ensureStandings(); // background refresh when stale
   const cards = s.groups
     .map((g) => {
       const rows = g.entries
@@ -2725,58 +2863,38 @@ function renderGroupsView() {
       </section>`;
     })
     .join('');
-  matchesEl.innerHTML = `
+  return `
     <div class="groups-grid">${cards}</div>
     <p class="groups-legend">
       <span class="legend-dot direct"></span> Top 2 advance
       <span class="legend-dot maybe"></span> Best 8 third-placed advance
     </p>`;
-  applyEntranceAnimation();
 }
 
-function render() {
-  if (state.filter === 'live') {
-    const live = state.events.filter((e) => e.state === 'in');
-    if (!live.length) {
-      matchesEl.innerHTML = `<p class="empty">No live match right now. The LIVE tab appears whenever a game is in progress.</p>`;
-    } else {
-      matchesEl.innerHTML =
-        `<section class="day live-only">` +
-        live.map((e) => matchCard(e, { hero: true, forceExpand: true })).join('') +
-        `</section>`;
-      for (const e of live) ensureStats(e.id);
-    }
-    applyEntranceAnimation();
-    updateLivePolling();
-    updateNextBanner();
-    updatePredictionsChip();
-    return;
+function renderGroupsView() {
+  matchesEl.innerHTML = groupsHTML();
+  ensureStandings(); // background refresh when stale
+  if (state.standings?.groups?.length) applyEntranceAnimation();
+}
+
+function liveHTML() {
+  const live = state.events.filter((e) => e.state === 'in');
+  if (!live.length) {
+    return `<p class="empty">No live match right now. The LIVE tab appears whenever a game is in progress.</p>`;
   }
-  if (state.filter === 'groups') {
-    renderGroupsView();
-    updateLivePolling();
-    updateNextBanner();
-    return;
-  }
-  if (state.filter === 'bracket') {
-    renderBracketView();
-    updateLivePolling();
-    updateNextBanner();
-    return;
-  }
-  if (state.filter === 'scorers') {
-    renderScorersView();
-    updateLivePolling();
-    updateNextBanner();
-    return;
-  }
+  return (
+    `<section class="day live-only">` +
+    live.map((e) => matchCard(e, { hero: true, forceExpand: true })).join('') +
+    `</section>`
+  );
+}
+
+function listHTML() {
   const filtered = filterEvents(state.events);
   if (!filtered.length) {
-    matchesEl.innerHTML = state.events.length
+    return state.events.length
       ? `<p class="empty">No matches match this filter.</p>`
       : skeletonList();
-    updateLivePolling();
-    return;
   }
   const liveEvents = filtered.filter((e) => e.state === 'in');
   const otherEvents = filtered.filter((e) => e.state !== 'in');
@@ -2791,7 +2909,7 @@ function render() {
        </section>`
     : '';
   const groups = groupByDay(otherEvents);
-  matchesEl.innerHTML =
+  return (
     liveSection +
     groups
       .map(
@@ -2802,11 +2920,67 @@ function render() {
       </section>
     `
       )
-      .join('');
+      .join('')
+  );
+}
+
+// Build the markup for ANY tab from current state, with no side effects.
+// The swipe carousel renders the neighbouring tabs with this. filterEvents()
+// keys off state.filter, so we briefly borrow it and always restore it.
+function viewHTML(filter) {
+  const saved = state.filter;
+  state.filter = filter;
+  try {
+    switch (filter) {
+      case 'live': return liveHTML();
+      case 'groups': return groupsHTML();
+      case 'bracket': return bracketHTML();
+      case 'scorers': return scorersHTML();
+      default: return listHTML();
+    }
+  } finally {
+    state.filter = saved;
+  }
+}
+
+function render() {
+  if (state.filter === 'live') {
+    matchesEl.innerHTML = liveHTML();
+    for (const e of state.events.filter((x) => x.state === 'in')) ensureStats(e.id);
+    applyEntranceAnimation();
+    updateLivePolling();
+    updateNextBanner();
+    updatePredictionsChip();
+    updateIndicator(true);
+    return;
+  }
+  if (state.filter === 'groups') {
+    renderGroupsView();
+    updateLivePolling();
+    updateNextBanner();
+    updateIndicator(true);
+    return;
+  }
+  if (state.filter === 'bracket') {
+    renderBracketView();
+    updateLivePolling();
+    updateNextBanner();
+    updateIndicator(true);
+    return;
+  }
+  if (state.filter === 'scorers') {
+    renderScorersView();
+    updateLivePolling();
+    updateNextBanner();
+    updateIndicator(true);
+    return;
+  }
+  matchesEl.innerHTML = listHTML();
   applyEntranceAnimation();
   updateLivePolling();
   updateNextBanner();
   updatePredictionsChip();
+  updateIndicator(true);
   // Refresh stats for any expanded live match.
   for (const id of state.expanded) {
     const ev = state.events.find((e) => e.id === id);
@@ -2880,3 +3054,9 @@ ensurePhotoDb();
 load();
 ensureStandings();
 syncLiveTab();
+
+// Park the tab bubble under the active tab on first paint, and keep it
+// aligned when the viewport (and therefore the pill layout) changes.
+updateIndicator(false);
+window.addEventListener('resize', () => updateIndicator(false));
+window.addEventListener('orientationchange', () => updateIndicator(false));

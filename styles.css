@@ -34,6 +34,8 @@ html, body {
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: contain; /* let our pull-to-refresh own the gesture */
+  overscroll-behavior-x: none;    /* block Chrome's back/forward edge-swipe */
+  overflow-x: clip;               /* the swipe carousel translates off-screen */
 }
 
 .app-header {
@@ -93,18 +95,45 @@ html, body {
 .status { font-style: italic; }
 
 .filters {
-  display: flex;
-  gap: 6px;
   margin-top: 10px;
   margin-bottom: -2px;
   overflow-x: auto;
-  flex-wrap: nowrap;
+  overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
 .filters::-webkit-scrollbar { display: none; }
+.filters-track {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  width: max-content;
+  min-width: 100%;
+}
+/* The white "pill" behind the active tab. JS slides and stretches it
+   between tabs during a swipe (and animates it on a plain tap), so it
+   reads as one bubble travelling and connecting the two tabs. */
+.filter-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: #fff;
+  opacity: 0;
+  z-index: 0;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  transition:
+    left 0.32s cubic-bezier(0.22, 0.61, 0.36, 1),
+    width 0.32s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
 .filter { flex-shrink: 0; }
 .filter {
+  position: relative;
+  z-index: 1;
   background: rgba(255,255,255,0.10);
   color: #fff;
   border: 0;
@@ -113,8 +142,13 @@ html, body {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
 }
-.filter.active { background: #fff; color: var(--accent-deep); }
+/* Active text colour only — the white bubble behind it comes from
+   .filter-indicator, so we drop the solid background here. */
+.filter.active { background: transparent; color: var(--accent-deep); }
 
 /* LIVE tab — red, vibrant, pulsing. Appears only while a match is on. */
 .filter-live {
@@ -748,21 +782,44 @@ html, body {
    empty dialog skeleton stuck at the bottom of the page. */
 dialog:not([open]) { display: none !important; }
 
-/* Finger-tracking swipe between tabs. The matches container is the only
-   thing that moves; the surrounding page background matches the body so
-   nothing alien shows at the edges during a swipe. */
-#matches {
+/* Swipe between tabs (carousel). During a drag the current view and the
+   Next-match banner shift horizontally with the finger, while a fixed
+   layer holds the two neighbouring tabs — pre-rendered — so they slide in
+   to fill the gap. The page background never shows through. We also claim
+   the horizontal gesture from the browser (touch-action + preventDefault)
+   so Chrome's back/forward edge-swipe can't hijack it. */
+#matches, .next-banner { touch-action: pan-y; }
+#matches { will-change: transform; }
+.swipe-shift-anim {
+  transition: transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) !important;
+}
+.swipe-neighbors {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5; /* above content, below the sticky header (10) */
+  overflow: hidden;
+  pointer-events: none;
   will-change: transform;
-  /* The transform reads from inline style during a drag; this class adds
-     the easing curve only during the release/commit phase. */
 }
-#matches.swipe-glide {
-  transition:
-    transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 0.22s ease-out;
+.swipe-neighbors.anim {
+  transition: transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+.swipe-pane {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+/* Panes are sized and placed in JS to the content width, so the incoming
+   tab butts directly against the current one with no gap on any viewport.
+   Content fills the pane instead of re-centring inside it. */
+.swipe-pane .matches { margin-left: 0; margin-right: 0; max-width: none; }
+.swipe-pane .next-banner { margin: 14px 0 0; max-width: none; }
 @media (prefers-reduced-motion: reduce) {
-  #matches.swipe-glide { transition: none; }
+  .swipe-shift-anim, .swipe-neighbors.anim { transition: none !important; }
 }
 
 .player-dialog {
