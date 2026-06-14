@@ -200,6 +200,61 @@ body.live-mode .app-header {
 }
 .live-only { margin-top: 4px; }
 
+/* Pre-kickoff card shown in the LIVE tab in the minutes before a match (and
+   while waiting on a delayed start). */
+.live-kickoff {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 26px 18px;
+  text-align: center;
+}
+.lk-teams {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+}
+.lk-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.lk-flag { width: 52px; height: 52px; object-fit: contain; filter: drop-shadow(0 3px 8px rgba(0,0,0,0.4)); }
+.lk-flag.placeholder { border-radius: 6px; background: var(--surface-2); }
+.lk-name { font-weight: 800; font-size: 16px; }
+.lk-vs { color: var(--muted); font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.lk-status { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.lk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  padding: 7px 16px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(180deg, #e01228 0%, #a50d1d 100%);
+  box-shadow: 0 4px 16px rgba(224, 18, 40, 0.4);
+}
+.lk-badge.soon { background: linear-gradient(180deg, var(--accent) 0%, #0f8e5a 100%); box-shadow: 0 4px 16px rgba(25,195,125,0.35); color: #04130d; }
+.lk-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: lk-pulse 1.3s ease-in-out infinite;
+}
+@keyframes lk-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
+.lk-sub { color: var(--muted); font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { .lk-pulse { animation: none; } }
+
 .next-banner {
   position: relative;
   max-width: var(--max-w);
@@ -1626,6 +1681,13 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 .pred-status-pts.won { color: var(--accent); }
 .pred-status-pts.lost { color: var(--muted); }
+.pred-status-motm {
+  margin: -8px 0 14px;
+  padding: 0 2px;
+  font-size: 12.5px;
+  color: #ffd45c;
+}
+.pred-status-motm strong { color: #fff; }
 .predl-motm {
   color: #ffd45c;
   font-size: 12px;
@@ -1728,6 +1790,14 @@ tr.qual-direct .gt-name { color: var(--text); }
   font-variant-numeric: tabular-nums;
 }
 .predl-actual.live { color: var(--live); font-weight: 700; }
+.predl-star {
+  font-size: 12px;
+  color: #ffd45c;
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  margin-top: 2px;
+}
+.predl-star strong { color: var(--text); }
 .predl-pts {
   flex-shrink: 0;
   min-width: 34px;

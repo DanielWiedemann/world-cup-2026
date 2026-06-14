@@ -8,7 +8,8 @@ const TOURNAMENT_END = '2026-07-19';
 const CACHE_KEY = 'wc2026.events.v2'; // v2: events now carry team colors
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const LIVE_POLL_MS = 30 * 1000; // 30 seconds while something's live
-const KICKOFF_WINDOW_MS = 10 * 60 * 1000; // start polling 10 min before kickoff
+const KICKOFF_WINDOW_MS = 10 * 60 * 1000; // open the LIVE tab 10 min before kickoff
+const LATE_WINDOW_MS = 30 * 60 * 1000; // keep it open up to 30 min past a late start
 
 const STANDINGS_URL =
   'https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings';
@@ -190,9 +191,10 @@ function morphIndicator(p, dir) {
 let liveTabAutoShown = false;
 function syncLiveTab() {
   if (swipeActive) return; // never reorder the tab bar during a swipe
-  const anyLive = state.events.some((e) => e.state === 'in');
+  const showTab = liveTabEvents().length > 0; // live OR within the kickoff window
+  const anyTrulyLive = state.events.some((e) => e.state === 'in');
   let liveBtn = filtersBar.querySelector('.filter[data-filter="live"]');
-  if (anyLive && !liveBtn) {
+  if (showTab && !liveBtn) {
     liveBtn = document.createElement('button');
     liveBtn.className = 'filter filter-live';
     liveBtn.dataset.filter = 'live';
@@ -201,17 +203,19 @@ function syncLiveTab() {
     const track = filtersBar.querySelector('.filters-track');
     track.insertBefore(liveBtn, track.querySelector('.filter'));
     updateIndicator(true); // inserting at the front shifts every tab right
-    // Auto-jump to LIVE only once, and only if the user is sitting on the
-    // default tab and hasn't navigated — never yank them out of a tab they
-    // chose (e.g. mid-read on Groups when a match kicks off).
-    if (!liveTabAutoShown) {
-      liveTabAutoShown = true;
-      if (!userNavigated && state.filter === 'upcoming') setFilter('live');
-    }
-  } else if (!anyLive && liveBtn) {
+  } else if (!showTab && liveBtn) {
     liveBtn.remove();
+    liveTabAutoShown = false; // re-arm auto-jump for the next match that goes live
     if (state.filter === 'live') setFilter('today');
     else updateIndicator(true);
+    return;
+  }
+  // Auto-jump to LIVE only once a match is actually in progress (not merely
+  // imminent), and only if the user is on the default tab and hasn't
+  // navigated — never yank them out of a tab they chose.
+  if (anyTrulyLive && !liveTabAutoShown && !userNavigated && state.filter === 'upcoming') {
+    liveTabAutoShown = true;
+    setFilter('live');
   }
 }
 
@@ -362,6 +366,7 @@ nextBannerEl.addEventListener('click', () => {
     }
     if (layer) { layer.remove(); layer = null; }
     swipeActive = false;
+    syncLiveTab(); // reconcile any LIVE-tab change a poll deferred mid-swipe
   }
 
   // dir +1 = next tab (content slides left), -1 = prev tab (slides right).
@@ -383,6 +388,7 @@ nextBannerEl.addEventListener('click', () => {
         el.style.transform = '';
       }
       if (layer) { layer.remove(); layer = null; }
+      syncLiveTab(); // reconcile any LIVE-tab change a poll deferred mid-swipe
     }, ANIM_MS);
   }
 
@@ -480,10 +486,17 @@ nextBannerEl.addEventListener('click', () => {
 })();
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && hasActiveMatches()) livePoll();
+  if (!document.hidden) {
+    // Always catch up on scores when the app comes back to the foreground —
+    // a match may have finished while we were hidden. Throttled so flipping
+    // back and forth doesn't hammer ESPN.
+    pollScores({ throttleMs: 15000 });
+    updateNextBanner();
+  }
   updateLivePolling();
-  updateNextBanner();
 });
+window.addEventListener('focus', () => pollScores({ throttleMs: 15000 }));
+window.addEventListener('online', () => pollScores({ throttleMs: 15000 }));
 
 matchesEl.addEventListener('click', (e) => {
   // Share button.
@@ -1044,16 +1057,23 @@ function saveCache(events) {
   } catch {}
 }
 
-function hasActiveMatches() {
+// Matches that belong in the LIVE tab: in progress, or within 10 min of
+// kickoff — and we keep them there up to 30 min past a scheduled start that
+// hasn't flipped to live yet (a delayed kickoff).
+function liveTabEvents() {
   const now = Date.now();
-  return state.events.some((e) => {
+  return state.events.filter((e) => {
     if (e.state === 'in') return true;
     if (e.state === 'pre') {
       const t = new Date(e.date).getTime();
-      return t - now < KICKOFF_WINDOW_MS && t - now > -KICKOFF_WINDOW_MS;
+      return t - now <= KICKOFF_WINDOW_MS && now - t < LATE_WINDOW_MS;
     }
     return false;
   });
+}
+
+function hasActiveMatches() {
+  return liveTabEvents().length > 0;
 }
 
 function updateLivePolling() {
@@ -1072,22 +1092,39 @@ function totalGoals(e) {
   return (parseInt(e.home?.score, 10) || 0) + (parseInt(e.away?.score, 10) || 0);
 }
 
-async function livePoll() {
+// Dates worth re-fetching for fresh scores: yesterday (overnight finals),
+// today, tomorrow, plus any currently-live match's date.
+function recentDateSet() {
   const now = new Date();
-  const dates = new Set();
-  dates.add(ymd(now));
-  const tomorrow = new Date(now);
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  dates.add(ymd(tomorrow));
-  for (const e of state.events) {
-    if (e.state === 'in') dates.add(ymd(new Date(e.date)));
+  const set = new Set([ymd(now)]);
+  for (const d of [-1, 1]) {
+    const x = new Date(now);
+    x.setUTCDate(x.getUTCDate() + d);
+    set.add(ymd(x));
   }
+  for (const e of state.events) {
+    if (e.state === 'in') set.add(ymd(new Date(e.date)));
+  }
+  return set;
+}
+
+let lastPollAt = 0;
+let pollInFlight = false;
+
+// Lightweight score refresh (a handful of dates). Used by the 30s live
+// interval AND on focus/visibility/online, so a finished match's final score
+// shows up without a manual refresh. Guarded so two polls — or a poll and a
+// full load() — can't race and clobber each other's merge of state.events.
+async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
+  if (pollInFlight || state.loading) return;
+  if (throttleMs && Date.now() - lastPollAt < throttleMs) return;
+  pollInFlight = true;
+  lastPollAt = Date.now();
   try {
-    // Snapshot live scores so we can detect goals after the merge.
     const prevTotals = new Map(
       state.events.filter((e) => e.state === 'in').map((e) => [e.id, totalGoals(e)])
     );
-    const results = await Promise.allSettled([...dates].map(fetchDate));
+    const results = await Promise.allSettled([...recentDateSet()].map(fetchDate));
     const fresh = [];
     for (const r of results) if (r.status === 'fulfilled') fresh.push(...r.value);
     if (!fresh.length) return;
@@ -1100,19 +1137,28 @@ async function livePoll() {
     setUpdated(Date.now());
     syncLiveTab();
     render();
+    resolvePredictionStats(); // pull timelines so final points + MOTM resolve
+    if (predictionsDialog?.open) renderPredictionsList();
     // GOAL! Celebrate any live match whose total just went up.
-    for (const e of state.events) {
-      if (e.state !== 'in') continue;
-      const prev = prevTotals.get(e.id);
-      if (prev != null && totalGoals(e) > prev) {
-        celebrateGoal(e.id);
-        break; // one celebration per poll is plenty
+    if (celebrate) {
+      for (const e of state.events) {
+        if (e.state !== 'in') continue;
+        const prev = prevTotals.get(e.id);
+        if (prev != null && totalGoals(e) > prev) {
+          celebrateGoal(e.id);
+          break; // one celebration per poll is plenty
+        }
       }
     }
   } catch (err) {
-    console.error('Live poll failed', err);
+    console.error('Score poll failed', err);
+  } finally {
+    pollInFlight = false;
   }
 }
+
+// The 30s interval poller while a match is active.
+const livePoll = () => pollScores({ celebrate: true });
 
 // --- Goal celebration ------------------------------------------------------
 
@@ -1189,6 +1235,10 @@ async function load({ force = false } = {}) {
     setUpdated(cached.fetchedAt);
     render();
     state.loading = false;
+    // The full fixture cache is still warm, but recent results may have moved
+    // on (a final score, a kickoff). Do a cheap recent-dates refresh so the
+    // user never sees a stale score on open.
+    pollScores();
     return;
   }
 
@@ -1284,7 +1334,12 @@ function filterEvents(events) {
     return events.filter((e) => localDayKey(e.date) === today);
   }
   if (state.filter === 'upcoming') {
-    return events.filter((e) => e.state !== 'post' && new Date(e.date).getTime() > now - 3 * 60 * 60 * 1000);
+    // Only matches that haven't kicked off — a live game isn't "upcoming".
+    // Pre matches in the 10-min-before window are still 'pre', so they stay
+    // here as well as appearing in the LIVE tab.
+    return events.filter(
+      (e) => e.state === 'pre' && new Date(e.date).getTime() > now - LATE_WINDOW_MS
+    );
   }
   if (state.filter === 'past') {
     // Most-recent first.
@@ -1827,10 +1882,34 @@ function totalPredictionPoints() {
 // MOTM bonus can resolve.
 function resolvePredictionStats() {
   for (const e of state.events) {
-    if (e.state === 'post' && getPrediction(e.id)?.motm && !state.stats[e.id]) {
+    // Any finished match we predicted: load its timeline so the MOTM bonus
+    // resolves AND we can show who the match's standout (top scorer) was.
+    if (e.state === 'post' && getPrediction(e.id) && !state.stats[e.id]) {
       ensureStats(e.id);
     }
   }
+}
+
+// ESPN has no official "man of the match", so we surface the next best thing
+// from the timeline: the match's top scorer (most goals; earliest goal breaks
+// a tie). Own goals don't count. Returns null for a goalless game.
+function matchTopScorer(e) {
+  const entry = state.stats[e.id];
+  if (!entry || !entry.timeline) return null;
+  const tally = new Map();
+  for (const t of entry.timeline) {
+    if (t.kind !== 'goal' && t.kind !== 'penalty-goal') continue;
+    const name = t.player;
+    if (!name || name === '?') continue;
+    const side = timelineSide(t, e);
+    const abbr = side === 'home' ? e.home?.abbr : e.away?.abbr;
+    const cur = tally.get(name) || { name, abbr, goals: 0, first: Infinity };
+    cur.goals += 1;
+    cur.first = Math.min(cur.first, t.clockValue ?? Infinity);
+    tally.set(name, cur);
+  }
+  if (!tally.size) return null;
+  return [...tally.values()].sort((a, b) => b.goals - a.goals || a.first - b.first)[0];
 }
 
 const POS_RANK = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
@@ -1947,11 +2026,16 @@ function renderPredictionStatus(e) {
         : `· MOTM ${escapeHtml(motmName)} ✗`
       : '';
   const label = e.state === 'post' ? 'Final' : 'So far';
+  const star = e.state === 'post' ? matchTopScorer(e) : null;
+  const starHtml = star
+    ? `<div class="pred-status-motm">⭐ Star man: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}${star.goals > 1 ? ` · ${star.goals} goals` : ''}</div>`
+    : '';
   return `
     <div class="pred-status">
       <span class="pred-status-call">🎯 You called <strong>${p.h}–${p.a}</strong> ${motmState}</span>
       <span class="pred-status-pts ${total > 0 ? 'won' : 'lost'}">${label}: ${total == null ? '…' : '+' + total} pts</span>
-    </div>`;
+    </div>
+    ${starHtml}`;
 }
 
 function onPredictionStep(btn) {
@@ -2001,8 +2085,8 @@ function updatePredictionsChip() {
   if (ptsEl) ptsEl.textContent = String(totalPredictionPoints());
 }
 
-predictionsChip?.addEventListener('click', () => {
-  resolvePredictionStats();
+function renderPredictionsList() {
+  if (!predictionsList) return;
   const rows = state.events
     .filter((e) => getPrediction(e.id))
     .map((e) => {
@@ -2026,6 +2110,11 @@ predictionsChip?.addEventListener('click', () => {
         t?.logo
           ? `<img class="predl-flag" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
           : '<span class="predl-flag placeholder"></span>';
+      // Actual standout once the match is over.
+      const star = e.state === 'post' ? matchTopScorer(e) : null;
+      const starHtml = star
+        ? `<div class="predl-star">⭐ Star man: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}${star.goals > 1 ? ` · ${star.goals} goals` : ''}</div>`
+        : '';
       return `
         <div class="predl-row">
           <div class="predl-head">
@@ -2040,11 +2129,17 @@ predictionsChip?.addEventListener('click', () => {
             <span class="predl-pred">🎯 <strong>${p.h}–${p.a}</strong>${motmHtml}</span>
             <span class="predl-actual${isLive ? ' live' : ''}">${escapeHtml(actual)}</span>
           </div>
+          ${starHtml}
         </div>`;
     })
     .join('');
   predictionsList.innerHTML =
     rows || '<p class="empty">No predictions yet — expand an upcoming match to call the score.</p>';
+}
+
+predictionsChip?.addEventListener('click', () => {
+  resolvePredictionStats();
+  renderPredictionsList();
   if (typeof predictionsDialog.showModal === 'function') predictionsDialog.showModal();
 });
 
@@ -2602,6 +2697,7 @@ async function ensureStats(eventId) {
     // tab (where live matches are force-expanded but not in state.expanded).
     if (state.expanded.has(eventId) || state.filter === 'live') render();
     updatePredictionsChip(); // MOTM bonus may now resolve
+    if (predictionsDialog?.open) renderPredictionsList(); // star man may resolve
   } catch (err) {
     state.stats[eventId] = {
       error: 'Could not load stats.',
@@ -2902,15 +2998,50 @@ function renderGroupsView() {
 }
 
 function liveHTML() {
-  const live = state.events.filter((e) => e.state === 'in');
-  if (!live.length) {
-    return `<p class="empty">No live match right now. The LIVE tab appears whenever a game is in progress.</p>`;
+  const evs = liveTabEvents();
+  if (!evs.length) {
+    return `<p class="empty">No live match right now. The LIVE tab opens around kickoff time.</p>`;
   }
   return (
     `<section class="day live-only">` +
-    live.map((e) => matchCard(e, { hero: true, forceExpand: true })).join('') +
+    evs
+      .map((e) =>
+        e.state === 'in'
+          ? matchCard(e, { hero: true, forceExpand: true })
+          : preKickoffCard(e)
+      )
+      .join('') +
     `</section>`
   );
+}
+
+// Shown in the LIVE tab for a match that's imminent but hasn't kicked off.
+// If its scheduled time has already passed we say "waiting for kickoff".
+function preKickoffCard(e) {
+  const now = Date.now();
+  const t = new Date(e.date).getTime();
+  const late = now >= t;
+  const mins = Math.max(0, Math.ceil((t - now) / 60000));
+  const flag = (tm) =>
+    tm?.logo
+      ? `<img class="lk-flag" src="${escapeHtml(tm.logo)}" alt="" loading="lazy" />`
+      : '<span class="lk-flag placeholder"></span>';
+  const homeName = e.home?.short || e.home?.name || 'TBD';
+  const awayName = e.away?.short || e.away?.name || 'TBD';
+  const status = late
+    ? `<span class="lk-badge waiting"><span class="lk-pulse"></span>Waiting for kickoff…</span>
+       <span class="lk-sub">Scheduled ${escapeHtml(formatTime(e.date))} · should start any moment</span>`
+    : `<span class="lk-badge soon"><span class="lk-pulse"></span>Kicks off in ${mins} min</span>
+       <span class="lk-sub">${escapeHtml(formatTime(e.date))}</span>`;
+  return `
+    <article class="match hero live-kickoff" data-event-id="${escapeHtml(e.id)}">
+      <div class="lk-teams">
+        <div class="lk-team">${flag(e.home)}<span class="lk-name">${escapeHtml(homeName)}</span></div>
+        <span class="lk-vs">vs</span>
+        <div class="lk-team">${flag(e.away)}<span class="lk-name">${escapeHtml(awayName)}</span></div>
+      </div>
+      <div class="lk-status">${status}</div>
+    </article>`;
 }
 
 function listHTML() {
