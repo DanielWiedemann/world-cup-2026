@@ -19,6 +19,11 @@
     <div class="title-row">
       <h1>World Cup Schedule</h1>
       <div class="actions">
+        <button id="search-btn" class="icon-btn" aria-label="Search teams" title="Search teams">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/>
+          </svg>
+        </button>
         <button id="notify" class="icon-btn" hidden aria-label="Enable notifications" title="Enable notifications">
           <svg class="bell-off" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
             <path fill="currentColor" d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2z"/>
@@ -39,6 +44,13 @@
       <span id="tz-label" class="tz-label"></span>
       <button id="predictions-chip" class="predictions-chip" hidden>🎯 <span id="predictions-points">0</span> pts</button>
       <span id="status" class="status"></span>
+    </div>
+    <div id="search-bar" class="search-bar" hidden>
+      <svg class="search-bar-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/>
+      </svg>
+      <input id="search-input" class="search-input" type="search" inputmode="search" autocomplete="off" placeholder="Search a team — e.g. Germany" />
+      <button id="search-clear" class="search-clear" type="button" aria-label="Clear search">×</button>
     </div>
     <nav class="filters" role="tablist">
       <div class="filters-track">

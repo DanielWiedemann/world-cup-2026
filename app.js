@@ -73,6 +73,7 @@ function photoFor(teamAbbr, jersey) {
 let state = {
   events: [],
   filter: 'upcoming',
+  search: '',
   loading: false,
   expanded: new Set(),
   stats: loadStatsCache(),
@@ -113,15 +114,85 @@ filtersBar.addEventListener('click', (ev) => {
 function setFilter(filter) {
   state.filter = filter;
   state.animateNext = true;
+  closeSearch(); // picking a tab exits search
   filtersBar.querySelectorAll('.filter').forEach((b) =>
     b.classList.toggle('active', b.dataset.filter === filter)
   );
-  if (filter === 'scorers') ensureScorers();
+  if (filter === 'scorers') {
+    ensureScorers();
+    // One-shot: pull live timelines so live goals fold into the Golden Boot
+    // immediately on entry (the 30s poll keeps them fresh afterwards).
+    for (const e of state.events) if (e.state === 'in') ensureStats(e.id);
+  }
   if (filter === 'groups') ensureStandings();
   render(); // also repositions the tab indicator
   // Keep the active tab (and the bubble that lands on it) in view.
   const ab = filtersBar.querySelector('.filter.active');
   ab?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+}
+
+// --- Team search ----------------------------------------------------------
+const searchBtn = $('#search-btn');
+const searchBar = $('#search-bar');
+const searchInput = $('#search-input');
+const searchClear = $('#search-clear');
+
+function openSearch() {
+  if (!searchBar) return;
+  searchBar.hidden = false;
+  searchBtn?.classList.add('on');
+  searchInput?.focus();
+}
+function closeSearch() {
+  if (!searchBar || searchBar.hidden) return;
+  searchBar.hidden = true;
+  searchBtn?.classList.remove('on');
+  if (searchInput) searchInput.value = '';
+  state.search = '';
+}
+searchBtn?.addEventListener('click', () => {
+  if (searchBar.hidden) openSearch();
+  else { closeSearch(); render(); }
+});
+searchInput?.addEventListener('input', () => {
+  state.search = searchInput.value;
+  render();
+});
+searchInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeSearch(); render(); }
+});
+searchClear?.addEventListener('click', () => {
+  state.search = '';
+  if (searchInput) { searchInput.value = ''; searchInput.focus(); }
+  render();
+});
+
+// Every game involving a team whose name/short/abbr matches the query,
+// grouped by day. Drives the search view (overrides the active tab).
+function searchHTML() {
+  const q = state.search.trim().toLowerCase();
+  const hit = (t) =>
+    t && [t.name, t.short, t.abbr].some((v) => (v || '').toLowerCase().includes(q));
+  const found = state.events.filter((e) => hit(e.home) || hit(e.away));
+  if (!found.length) {
+    return `<p class="empty">No games match “${escapeHtml(state.search.trim())}”.</p>`;
+  }
+  const byDay = new Map();
+  for (const e of found) {
+    const k = localDayKey(e.date);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(e);
+  }
+  return Array.from(byDay)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(
+      ([day, evs]) => `
+      <section class="day">
+        <h2 class="day-header">${escapeHtml(formatDayLabel(day))}</h2>
+        ${evs.map(matchCard).join('')}
+      </section>`
+    )
+    .join('');
 }
 
 // The white "bubble" behind the active tab. updateIndicator() parks it under
@@ -1143,6 +1214,7 @@ async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
     const prevTotals = new Map(
       state.events.filter((e) => e.state === 'in').map((e) => [e.id, totalGoals(e)])
     );
+    const prevStates = new Map(state.events.map((e) => [e.id, e.state]));
     const results = await Promise.allSettled([...recentDateSet()].map(fetchDate));
     const fresh = [];
     for (const r of results) if (r.status === 'fulfilled') fresh.push(...r.value);
@@ -1155,6 +1227,15 @@ async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
     saveCache(state.events);
     setUpdated(Date.now());
     syncLiveTab();
+    // Keep live match timelines fresh (drives the live Golden Boot) and, when
+    // a match has just ended, refresh the season scorers so its goals settle
+    // into the official leaderboard.
+    let justFinished = false;
+    for (const e of state.events) {
+      if (e.state === 'in') ensureStats(e.id);
+      else if (e.state === 'post' && prevStates.get(e.id) === 'in') justFinished = true;
+    }
+    if (justFinished) ensureScorers(true);
     render();
     resolvePredictionStats(); // pull timelines so final points + MOTM resolve
     if (predictionsDialog?.open) renderPredictionsList();
@@ -1530,7 +1611,7 @@ async function shareMatch(id) {
 const SCORERS_URL =
   'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/statistics?season=2026';
 const SCORERS_CACHE_KEY = 'wc2026.scorers.v1';
-const SCORERS_TTL_MS = 30 * 60 * 1000;
+const SCORERS_TTL_MS = 5 * 60 * 1000;
 let scorersLoading = false;
 
 function loadScorersCache() {
@@ -1569,6 +1650,11 @@ function parseLeaders(category) {
 async function ensureScorers(force = false) {
   const cached = state.scorers;
   if (!force && cached && Date.now() - cached.fetchedAt < SCORERS_TTL_MS) return;
+  // While a match is live, don't refresh the season feed (only the FT-forced
+  // refresh does): mergedGoals() adds live goals on top of this snapshot, so a
+  // mid-match season update could double-count. The snapshot stays put until
+  // full time, where pollScores() forces a clean refresh.
+  if (!force && cached && state.events.some((e) => e.state === 'in')) return;
   if (scorersLoading) return;
   scorersLoading = true;
   try {
@@ -1603,31 +1689,94 @@ function scorerRow(p, i, statLabel) {
     ? `<span class="sc-photo" data-player-photo="${escapeHtml(photo)}" data-player-name="${escapeHtml(p.name)}" data-player-team="${escapeHtml(p.teamName)}" data-player-pos="" data-player-jersey="${escapeHtml(p.jersey)}" role="button" tabindex="0"><img src="${escapeHtml(photo)}" alt="" loading="lazy" /></span>`
     : `<span class="sc-photo placeholder">${escapeHtml(p.jersey || '?')}</span>`;
   const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+  const liveTag = p.live ? '<span class="sc-live"><span class="sc-live-dot"></span>LIVE</span>' : '';
+  const extra = p.live && !p.apps
+    ? 'scoring now'
+    : `${p.apps} app${p.apps === 1 ? '' : 's'}${statLabel === 'goals' && p.assists ? ` · ${p.assists} ast` : ''}`;
   return `
-    <div class="sc-row ${i === 0 ? 'leader' : ''}">
+    <div class="sc-row ${i === 0 ? 'leader' : ''}${p.live ? ' live' : ''}">
       <span class="sc-rank">${medal}</span>
       ${badge}
       <div class="sc-id">
-        <span class="sc-name">${escapeHtml(p.name)}</span>
+        <span class="sc-name">${escapeHtml(p.name)}${liveTag}</span>
         <span class="sc-team">${p.teamLogo ? `<img src="${escapeHtml(p.teamLogo)}" alt="" loading="lazy" />` : ''}${escapeHtml(p.teamName)}</span>
       </div>
       <div class="sc-stat">
         <span class="sc-val">${p.value}</span>
         <span class="sc-unit">${statLabel}</span>
       </div>
-      <span class="sc-extra">${p.apps} app${p.apps === 1 ? '' : 's'}${statLabel === 'goals' && p.assists ? ` · ${p.assists} ast` : ''}</span>
+      <span class="sc-extra">${escapeHtml(extra)}</span>
     </div>`;
+}
+
+// Goals scored in currently-live matches, keyed by player+team. The season
+// statistics feed only updates around full time, so we fold live goals in on
+// top of it to keep the Golden Boot current during a match.
+function liveGoalTally() {
+  const tally = new Map();
+  for (const e of state.events) {
+    if (e.state !== 'in') continue;
+    const entry = state.stats[e.id];
+    if (!entry || !entry.timeline) continue;
+    for (const t of entry.timeline) {
+      if (t.kind !== 'goal' && t.kind !== 'penalty-goal') continue; // not own goals
+      if (!t.player || t.player === '?') continue;
+      const side = timelineSide(t, e);
+      const team = side === 'home' ? e.home : e.away;
+      const rp = findRosterPlayer(entry.lineups, side, t.athleteId, t.player);
+      const key = `${lastNameKey(t.player)}|${team?.abbr || ''}`;
+      const cur = tally.get(key) || {
+        name: t.player,
+        jersey: rp?.jersey || '',
+        teamAbbr: team?.abbr || '',
+        teamName: team?.short || team?.name || '',
+        teamLogo: team?.logo || '',
+        goals: 0,
+      };
+      cur.goals += 1;
+      if (rp?.jersey) cur.jersey = rp.jersey;
+      tally.set(key, cur);
+    }
+  }
+  return tally;
+}
+
+// Season goals leaderboard with any live goals merged in (and flagged live).
+function mergedGoals() {
+  const base = (state.scorers?.goals || []).map((p) => ({ ...p }));
+  const byKey = new Map(
+    base.map((p) => [`${lastNameKey(p.shortName || p.name)}|${p.teamAbbr}`, p])
+  );
+  for (const [key, lg] of liveGoalTally()) {
+    const hit = byKey.get(key);
+    if (hit) {
+      hit.value = (hit.value || 0) + lg.goals;
+      hit.goals = (hit.goals || 0) + lg.goals;
+      hit.live = true;
+    } else {
+      const np = {
+        name: lg.name, shortName: lg.name, jersey: lg.jersey,
+        teamAbbr: lg.teamAbbr, teamName: lg.teamName, teamLogo: lg.teamLogo,
+        value: lg.goals, apps: 0, assists: 0, live: true,
+      };
+      byKey.set(key, np);
+      base.push(np);
+    }
+  }
+  base.sort((a, b) => b.value - a.value || (b.goals || 0) - (a.goals || 0));
+  return base;
 }
 
 function scorersHTML() {
   const s = state.scorers;
-  if (!s || (!s.goals?.length && !s.assists?.length)) {
+  const goalsList = mergedGoals();
+  if ((!s || (!s.goals?.length && !s.assists?.length)) && !goalsList.length) {
     return state.scorersError
       ? `<p class="empty">Couldn't load scorers. Try again later.</p>`
       : `${Array.from({ length: 6 }, () => '<div class="skeleton-card"></div>').join('')}`;
   }
-  const goals = (s.goals || []).slice(0, 20);
-  const assists = (s.assists || []).slice(0, 10);
+  const goals = goalsList.slice(0, 20);
+  const assists = (s?.assists || []).slice(0, 10);
   return `
     <section class="day">
       <h2 class="day-header">👑 Golden Boot</h2>
@@ -1646,6 +1795,8 @@ function scorersHTML() {
 function renderScorersView() {
   matchesEl.innerHTML = scorersHTML();
   ensureScorers();
+  // NB: live match timelines are kept fresh by the 30s poll and on tab entry
+  // (see setFilter) — NOT here, or render()→ensureStats()→render() would cycle.
   const s = state.scorers;
   if (s && (s.goals?.length || s.assists?.length)) applyEntranceAnimation();
 }
@@ -2441,12 +2592,13 @@ function renderTimeline(e, timeline, lineups) {
     const isGoal = /goal$/.test(t.kind);
     const rowCls = `tl-row ${side} ${isGoal ? 'goal' : ''}${t.kind === 'sub' ? ' sub' : ''}`;
     const nameInner = `<span class="tl-nm">${escapeHtml(t.player)}</span>`;
-    // Glyph (goal ball / card) and the PEN/OG tag live OUTSIDE the text column
-    // entirely — the glyph sits next to the minute pill, the tag on its own
-    // line — so the player name gets the full width of the column and wraps
-    // cleanly instead of breaking mid-word.
+    // Glyph (goal ball / card) and the PEN/OG tag sit together beside the
+    // minute pill — OUTSIDE the text column — so the name gets the column's
+    // full width AND the penalty marker stays neatly aligned with the goal.
     const glyphHtml = `<span class="tl-glyph">${glyph}</span>`;
-    const tagLine = tag ? `<div class="tl-tagline">${tag}</div>` : '';
+    const marks = side === 'home'
+      ? `<span class="tl-marks">${glyphHtml}${tag}</span>`
+      : `<span class="tl-marks">${tag}${glyphHtml}</span>`;
     if (side === 'home') {
       return `
         <li class="${rowCls}">
@@ -2454,10 +2606,9 @@ function renderTimeline(e, timeline, lineups) {
             ${badge}
             <div class="tl-text">
               <div class="tl-name">${nameInner}</div>
-              ${tagLine}
               ${assistHtml}
             </div>
-            ${glyphHtml}
+            ${marks}
             <span class="tl-dots" aria-hidden="true"></span>
             <span class="tl-minute">${minute}</span>
           </div>
@@ -2468,10 +2619,9 @@ function renderTimeline(e, timeline, lineups) {
         <div class="tl-half">
           <span class="tl-minute">${minute}</span>
           <span class="tl-dots" aria-hidden="true"></span>
-          ${glyphHtml}
+          ${marks}
           <div class="tl-text">
             <div class="tl-name">${nameInner}</div>
-            ${tagLine}
             ${assistHtml}
           </div>
           ${badge}
@@ -2745,7 +2895,7 @@ async function ensureStats(eventId) {
     saveStatsCache();
     // Re-render if this match is on screen: expanded in a list, or the live
     // tab (where live matches are force-expanded but not in state.expanded).
-    if (state.expanded.has(eventId) || state.filter === 'live') render();
+    if (state.expanded.has(eventId) || state.filter === 'live' || state.filter === 'scorers') render();
     updatePredictionsChip(); // MOTM bonus may now resolve
     if (predictionsDialog?.open) renderPredictionsList(); // star man may resolve
   } catch (err) {
@@ -3147,7 +3297,17 @@ function setLiveMode(on) {
 }
 
 function render() {
-  setLiveMode(state.filter === 'live');
+  setLiveMode(state.filter === 'live' && !state.search.trim());
+  // Search overrides the active tab: show every game that matches the query.
+  if (state.search.trim()) {
+    matchesEl.innerHTML = searchHTML();
+    applyEntranceAnimation();
+    updateLivePolling();
+    if (nextBannerEl) nextBannerEl.hidden = true;
+    updatePredictionsChip();
+    updateIndicator(true);
+    return;
+  }
   if (state.filter === 'live') {
     matchesEl.innerHTML = liveHTML();
     for (const e of state.events.filter((x) => x.state === 'in')) ensureStats(e.id);

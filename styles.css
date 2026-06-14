@@ -94,6 +94,48 @@ html, body {
 .tz-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status { font-style: italic; }
 
+/* Expanding team search. Hidden until the search icon is tapped. */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  animation: search-in 0.18s ease-out;
+}
+.search-bar[hidden] { display: none; }
+@keyframes search-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.search-bar-icon { color: rgba(255, 255, 255, 0.7); flex-shrink: 0; }
+.search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.search-input::placeholder { color: rgba(255, 255, 255, 0.55); font-weight: 500; }
+.search-clear {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.search-clear:hover { background: rgba(255, 255, 255, 0.3); }
+
 .filters {
   margin-top: 10px;
   margin-bottom: -2px;
@@ -818,7 +860,12 @@ body.live-mode .app-header {
   min-width: 0;
   overflow-wrap: break-word;
 }
-.tl-tagline { margin-top: 3px; line-height: 1; }
+.tl-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
 .tl-tag {
   flex-shrink: 0;
   font-size: 9px;
@@ -2007,6 +2054,25 @@ tr.qual-direct .gt-name { color: var(--text); }
 .sc-photo.placeholder { font-weight: 800; color: var(--muted); cursor: default; }
 .sc-id { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sc-name { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-row.live { box-shadow: inset 2px 0 0 var(--live); }
+.sc-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--live);
+  vertical-align: middle;
+}
+.sc-live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: live-tab-pulse 1.6s ease-in-out infinite;
+}
 .sc-team {
   display: flex;
   align-items: center;
