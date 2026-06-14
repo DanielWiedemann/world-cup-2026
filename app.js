@@ -2441,8 +2441,10 @@ function renderTimeline(e, timeline, lineups) {
     const isGoal = /goal$/.test(t.kind);
     const rowCls = `tl-row ${side} ${isGoal ? 'goal' : ''}${t.kind === 'sub' ? ' sub' : ''}`;
     const nameInner = `<span class="tl-nm">${escapeHtml(t.player)}</span>`;
-    // Glyph stays on the name line (it's tiny); the PEN/OG tag drops to its
-    // own line so it never squeezes the name into ugly mid-word wraps.
+    // Glyph (goal ball / card) and the PEN/OG tag live OUTSIDE the text column
+    // entirely — the glyph sits next to the minute pill, the tag on its own
+    // line — so the player name gets the full width of the column and wraps
+    // cleanly instead of breaking mid-word.
     const glyphHtml = `<span class="tl-glyph">${glyph}</span>`;
     const tagLine = tag ? `<div class="tl-tagline">${tag}</div>` : '';
     if (side === 'home') {
@@ -2451,10 +2453,11 @@ function renderTimeline(e, timeline, lineups) {
           <div class="tl-half">
             ${badge}
             <div class="tl-text">
-              <div class="tl-name">${nameInner}${glyphHtml}</div>
+              <div class="tl-name">${nameInner}</div>
               ${tagLine}
               ${assistHtml}
             </div>
+            ${glyphHtml}
             <span class="tl-dots" aria-hidden="true"></span>
             <span class="tl-minute">${minute}</span>
           </div>
@@ -2465,8 +2468,9 @@ function renderTimeline(e, timeline, lineups) {
         <div class="tl-half">
           <span class="tl-minute">${minute}</span>
           <span class="tl-dots" aria-hidden="true"></span>
+          ${glyphHtml}
           <div class="tl-text">
-            <div class="tl-name">${glyphHtml}${nameInner}</div>
+            <div class="tl-name">${nameInner}</div>
             ${tagLine}
             ${assistHtml}
           </div>

@@ -691,8 +691,8 @@ body.live-mode .app-header {
 }
 /* Give the side that actually has the event ~62% of the row so long names
    have room to breathe; the empty side keeps the centre axis roughly central. */
-.tl-row.home { grid-template-columns: 1.6fr 1fr; }
-.tl-row.away { grid-template-columns: 1fr 1.6fr; }
+.tl-row.home { grid-template-columns: 1.9fr 1fr; }
+.tl-row.away { grid-template-columns: 1fr 1.9fr; }
 /* Goal rows pop with a subtle gold tint + brighter type. */
 .tl-row.goal {
   background: linear-gradient(90deg,
@@ -837,8 +837,13 @@ body.live-mode .app-header {
   border: 1px solid color-mix(in srgb, var(--live) 45%, transparent);
 }
 .tl-row.home .tl-name { justify-content: flex-end; }
-.tl-row.home .tl-text { text-align: right; align-items: flex-end; }
-.tl-row.away .tl-text { text-align: left; align-items: flex-start; }
+.tl-row.away .tl-name { justify-content: flex-start; }
+/* IMPORTANT: keep the column children stretched to full width (the default)
+   and align via text-align / justify-content only. Using align-items:flex-end
+   shrinks the name line to its content, so a long name overflows the text box
+   and gets clipped on the left instead of wrapping. */
+.tl-row.home .tl-text { text-align: right; }
+.tl-row.away .tl-text { text-align: left; }
 .tl-glyph {
   flex-shrink: 0;
   display: inline-flex;

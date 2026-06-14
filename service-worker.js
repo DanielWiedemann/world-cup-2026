@@ -1,4 +1,4 @@
-const CACHE = 'wc2026-v30';
+const CACHE = 'wc2026-v31';
 const SHELL = [
   './',
   './index.html',
