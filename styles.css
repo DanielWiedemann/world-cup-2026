@@ -626,17 +626,18 @@ body.live-mode .app-header {
   background: var(--surface-2);
 }
 .stat-bar-fill { transition: width 0.4s ease; }
+/* Each side is tinted with its team's colour (set per-row via --hc/--ac). */
 .stat-bar-fill.home {
-  background: var(--accent);
+  background: var(--hc, var(--accent));
   border-radius: 2px 0 0 2px;
 }
 .stat-bar-fill.away {
-  background: color-mix(in srgb, var(--accent) 35%, var(--surface));
+  background: var(--ac, color-mix(in srgb, var(--accent) 35%, var(--surface)));
   border-radius: 0 2px 2px 0;
 }
-/* Winning side's number gets a stronger weight. */
-.stat-row.home .stat-val.home,
-.stat-row.away .stat-val.away { color: var(--accent); }
+/* Winning side's number takes its team colour; the other stays muted. */
+.stat-row.home .stat-val.home { color: var(--hc, var(--accent)); }
+.stat-row.away .stat-val.away { color: var(--ac, var(--accent)); }
 .stat-row.home .stat-val.away,
 .stat-row.away .stat-val.home { color: var(--muted); }
 
@@ -688,6 +689,10 @@ body.live-mode .app-header {
   border-radius: 8px;
   min-width: 0;
 }
+/* Give the side that actually has the event ~62% of the row so long names
+   have room to breathe; the empty side keeps the centre axis roughly central. */
+.tl-row.home { grid-template-columns: 1.6fr 1fr; }
+.tl-row.away { grid-template-columns: 1fr 1.6fr; }
 /* Goal rows pop with a subtle gold tint + brighter type. */
 .tl-row.goal {
   background: linear-gradient(90deg,
@@ -807,14 +812,29 @@ body.live-mode .app-header {
   gap: 5px;
   min-width: 0;
 }
-/* The NAME text clamps to 2 lines; the glyph (goal ball / card) is a sibling
-   that never shrinks, so it's always visible even when the name wraps. */
+/* The name wraps in full (no truncation) — the glyph + penalty/OG tag are
+   siblings that never shrink, so they're always visible. */
 .tl-nm {
   min-width: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  overflow-wrap: break-word;
+}
+.tl-tagline { margin-top: 3px; line-height: 1; }
+.tl-tag {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.tl-tag.pen { background: linear-gradient(180deg, #ffd45c, #f4a738); color: #2a1a06; }
+.tl-tag.og { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+.tl-tag.miss {
+  background: color-mix(in srgb, var(--live) 22%, var(--surface));
+  color: var(--live);
+  border: 1px solid color-mix(in srgb, var(--live) 45%, transparent);
 }
 .tl-row.home .tl-name { justify-content: flex-end; }
 .tl-row.home .tl-text { text-align: right; align-items: flex-end; }
@@ -831,11 +851,7 @@ body.live-mode .app-header {
   color: var(--muted);
   margin-top: 1px;
   line-height: 1.25;
-  /* Keep on a single line where possible, ellipsis otherwise. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .card {
   display: inline-block;
@@ -2104,6 +2120,7 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 .prefs-dialog::backdrop { background: rgba(5, 14, 11, 0.6); backdrop-filter: blur(4px); }
 .prefs-dialog form { padding: 22px 22px 16px; }
+.prefs-dialog .prefs-body { padding: 22px 22px 18px; }
 .prefs-dialog h2 { margin: 0 0 4px; font-size: 18px; }
 .prefs-sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
 .prefs-list { list-style: none; padding: 0; margin: 0 0 12px; }

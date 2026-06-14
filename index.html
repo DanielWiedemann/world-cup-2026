@@ -73,15 +73,12 @@
   </dialog>
 
   <dialog id="predictions-dialog" class="prefs-dialog" aria-labelledby="predictions-title">
-    <form method="dialog">
+    <button type="button" id="predictions-close" class="player-dialog-close" aria-label="Close">×</button>
+    <div class="prefs-body">
       <h2 id="predictions-title">🎯 Your predictions</h2>
-      <p class="prefs-sub" id="predictions-sub">Exact score = 3 pts · Correct result = 1 pt</p>
+      <p class="prefs-sub" id="predictions-sub">Exact score = 3 pts · Correct result = 1 pt · MOTM +2</p>
       <div id="predictions-list" class="predictions-list"></div>
-      <menu class="prefs-actions">
-        <span class="spacer"></span>
-        <button type="submit" class="primary-btn">Close</button>
-      </menu>
-    </form>
+    </div>
   </dialog>
 
   <dialog id="player-dialog" class="player-dialog" aria-labelledby="player-dialog-name">

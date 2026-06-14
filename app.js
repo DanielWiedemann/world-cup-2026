@@ -951,6 +951,25 @@ function safeHex(c) {
   return c && /^#[0-9a-fA-F]{6}$/.test(c) ? c : '';
 }
 
+function hexToRgb(h) {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(h || '');
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// Two kit colours are "clashing" if they're perceptually close (e.g. Korea
+// and Czechia both red) — the stats bars would be indistinguishable.
+function colorsClash(a, b) {
+  const ra = hexToRgb(a);
+  const rb = hexToRgb(b);
+  if (!ra || !rb) return false;
+  const d = Math.sqrt(
+    (ra[0] - rb[0]) ** 2 + (ra[1] - rb[1]) ** 2 + (ra[2] - rb[2]) ** 2
+  );
+  return d < 75;
+}
+
 // --- Group standings -------------------------------------------------------
 
 function loadStandingsCache() {
@@ -2142,6 +2161,13 @@ predictionsChip?.addEventListener('click', () => {
   renderPredictionsList();
   if (typeof predictionsDialog.showModal === 'function') predictionsDialog.showModal();
 });
+$('#predictions-close')?.addEventListener('click', () => predictionsDialog.close());
+// Click on the backdrop (outside the card) closes it. The dialog content is
+// wrapped in .prefs-body, so any click landing on the dialog element itself
+// is the backdrop.
+predictionsDialog?.addEventListener('click', (e) => {
+  if (e.target === predictionsDialog) predictionsDialog.close();
+});
 
 // --- Team sheet -------------------------------------------------------------
 
@@ -2330,9 +2356,18 @@ const TIMELINE_GLYPH = {
   'goal': '⚽',
   'own-goal': '⚽',
   'penalty-goal': '⚽',
+  'penalty-miss': '🚫',
   'yellow-card': '<span class="card yellow"></span>',
   'red-card': '<span class="card red"></span>',
   'sub': '<span class="sub-glyph">⇄</span>',
+};
+
+// A small pill flagging penalties / own goals, kept OUTSIDE the player name so
+// it's always visible even when the name wraps.
+const TIMELINE_TAG = {
+  'penalty-goal': '<span class="tl-tag pen">PEN</span>',
+  'own-goal': '<span class="tl-tag og">OG</span>',
+  'penalty-miss': '<span class="tl-tag miss">PEN MISS</span>',
 };
 
 function timelineSide(entry, e) {
@@ -2397,7 +2432,7 @@ function renderTimeline(e, timeline, lineups) {
     const rosterPlayer = findRosterPlayer(lineups, side, t.athleteId, t.player);
     const badge = playerBadge(rosterPlayer, abbr, t.player);
     const glyph = TIMELINE_GLYPH[t.kind] || '';
-    const annot = t.kind === 'own-goal' ? ' (OG)' : t.kind === 'penalty-goal' ? ' (P)' : '';
+    const tag = TIMELINE_TAG[t.kind] || '';
     const subPrefix = t.kind === 'sub' ? 'for' : 'assist';
     const assistHtml = t.assist
       ? `<span class="tl-assist">${subPrefix} ${escapeHtml(t.assist)}</span>`
@@ -2405,16 +2440,19 @@ function renderTimeline(e, timeline, lineups) {
     const minute = escapeHtml(t.minute || "—'");
     const isGoal = /goal$/.test(t.kind);
     const rowCls = `tl-row ${side} ${isGoal ? 'goal' : ''}${t.kind === 'sub' ? ' sub' : ''}`;
-    const nameInner = `<span class="tl-nm">${escapeHtml(t.player)}${escapeHtml(annot)}</span>`;
-    // Glyph lives OUTSIDE the line-clamped name span so cards/goals are never
-    // clipped when a long name wraps to two lines.
+    const nameInner = `<span class="tl-nm">${escapeHtml(t.player)}</span>`;
+    // Glyph stays on the name line (it's tiny); the PEN/OG tag drops to its
+    // own line so it never squeezes the name into ugly mid-word wraps.
+    const glyphHtml = `<span class="tl-glyph">${glyph}</span>`;
+    const tagLine = tag ? `<div class="tl-tagline">${tag}</div>` : '';
     if (side === 'home') {
       return `
         <li class="${rowCls}">
           <div class="tl-half">
             ${badge}
             <div class="tl-text">
-              <div class="tl-name">${nameInner}<span class="tl-glyph">${glyph}</span></div>
+              <div class="tl-name">${nameInner}${glyphHtml}</div>
+              ${tagLine}
               ${assistHtml}
             </div>
             <span class="tl-dots" aria-hidden="true"></span>
@@ -2428,7 +2466,8 @@ function renderTimeline(e, timeline, lineups) {
           <span class="tl-minute">${minute}</span>
           <span class="tl-dots" aria-hidden="true"></span>
           <div class="tl-text">
-            <div class="tl-name"><span class="tl-glyph">${glyph}</span>${nameInner}</div>
+            <div class="tl-name">${glyphHtml}${nameInner}</div>
+            ${tagLine}
             ${assistHtml}
           </div>
           ${badge}
@@ -2452,19 +2491,26 @@ function parseStatNum(v) {
 function renderStatsTable(e, rows) {
   const homeName = e.home?.short || e.home?.name || 'Home';
   const awayName = e.away?.short || e.away?.name || 'Away';
+  // Bars are tinted with each team's colour. Fall back to a readable tint
+  // when a kit colour is missing, and if both teams share a colour (e.g. two
+  // red kits) lighten the away side so the two bars stay distinguishable.
+  const rawH = safeHex(e.home?.color);
+  const rawA = safeHex(e.away?.color);
+  const hc = rawH || 'var(--accent)';
+  let ac = rawA || '#5a8bd6';
+  if (rawH && rawA && colorsClash(rawH, rawA)) {
+    ac = `color-mix(in srgb, ${rawA} 42%, #ffffff)`;
+  }
   const items = rows
     .map((row) => {
       const h = parseStatNum(row.home);
       const a = parseStatNum(row.away);
       const total = h + a;
-      // Lower-is-better rows (fouls, cards): show proportion as-is but the
-      // colour palette stays neutral. The bar still communicates who has
-      // more of the thing.
       const hPct = total > 0 ? (h / total) * 100 : 50;
       const aPct = total > 0 ? (a / total) * 100 : 50;
       const winSide = h === a ? 'tied' : h > a ? 'home' : 'away';
       return `
-        <div class="stat-row ${winSide}">
+        <div class="stat-row ${winSide}" style="--hc:${hc};--ac:${ac}">
           <div class="stat-label">${escapeHtml(row.label)}</div>
           <div class="stat-values">
             <span class="stat-val home">${escapeHtml(row.home)}</span>
@@ -2739,6 +2785,9 @@ function extractTimeline(data) {
         : /penalty/i.test(text) && !/saved|missed/i.test(text)
         ? 'penalty-goal'
         : 'goal';
+    } else if (/penalt/i.test(text) && /(miss|saved|wide|post|over)/i.test(text)) {
+      // A penalty that didn't go in (missed, saved, hit the woodwork).
+      kind = 'penalty-miss';
     } else if (t === 'yellow-card' || /yellow card/i.test(text)) {
       kind = 'yellow-card';
     } else if (t === 'red-card' || /red card/i.test(text)) {
