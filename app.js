@@ -591,8 +591,10 @@ matchesEl.addEventListener('click', (e) => {
     onMotmPick(motmBtn);
     return;
   }
-  // Team tap → team sheet (match cards and group tables).
-  const teamEl = e.target.closest('.team[data-team-abbr], .gt-team[data-team-abbr]');
+  // Team tap → team sheet — only from the group tables and from the team
+  // chips INSIDE the expanded game info. Tapping a team on a match card just
+  // opens the game info (handled by the card-expand fall-through below).
+  const teamEl = e.target.closest('.gt-team[data-team-abbr], .game-team[data-team-abbr]');
   if (teamEl && teamEl.dataset.teamAbbr) {
     e.stopPropagation();
     openTeamDialog(teamEl.dataset.teamAbbr);
@@ -622,8 +624,9 @@ matchesEl.addEventListener('click', (e) => {
   if (state.expanded.has(id)) state.expanded.delete(id);
   else state.expanded.add(id);
   render();
-  const ev = state.events.find((x) => x.id === id);
-  if (state.expanded.has(id) && ev && ev.state !== 'pre') ensureStats(id);
+  // Load match detail when expanded. Pre matches are fetched too, but only the
+  // odds (win probability) are shown for them — the rest is the prediction panel.
+  if (state.expanded.has(id)) ensureStats(id);
 });
 
 const POSITION_LONG = {
@@ -1473,11 +1476,9 @@ function teamMarkup(t) {
   const logo = t.logo
     ? `<img class="logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
     : `<div class="logo placeholder">${escapeHtml((t.abbr || '?').slice(0, 3))}</div>`;
-  // Real teams (in the photo/standings universe) are tappable → team sheet.
-  const tappable = t.abbr && ABBR_TO_GUARDIAN[t.abbr]
-    ? ` data-team-abbr="${escapeHtml(t.abbr)}" role="button" tabindex="0"`
-    : '';
-  return `<div class="team"${tappable}>${logo}<span class="team-name">${escapeHtml(t.short || t.name || '')}</span></div>`;
+  // No team-sheet tap here any more — tapping a team on a card opens the game
+  // info (the team sheet lives behind the chips inside that game info).
+  return `<div class="team">${logo}<span class="team-name">${escapeHtml(t.short || t.name || '')}</span></div>`;
 }
 
 function matchAccent(e) {
@@ -1544,8 +1545,11 @@ function matchCard(e, { hero = false, forceExpand = false } = {}) {
       ? renderPredictionPanel(e)
       : renderStats(e)
     : '';
-  const share = !upcoming
-    ? `<button type="button" class="share-btn" data-share="${escapeHtml(e.id)}" aria-label="Share result" title="Share">${SHARE_ICON}</button>`
+  // The expanded game info now leads with a header (tap a team → team sheet,
+  // plus the share button, which used to clutter the main card) and the
+  // bookmaker win-probability bar.
+  const gameInfo = isExpanded
+    ? `<div class="game-info">${gameInfoHeader(e)}${oddsWidget(e)}${statsBlock}</div>`
     : '';
   const hint = forceExpand
     ? ''
@@ -1569,12 +1573,72 @@ function matchCard(e, { hero = false, forceExpand = false } = {}) {
         ${groupChip(e)}
         ${predictionChip(e)}
         ${venue}
-        ${share}
         ${hint}
       </div>
-      ${statsBlock}
+      ${gameInfo}
     </article>
   `;
+}
+
+// Header for the expanded game info: tappable team chips (→ team sheet) and
+// the share button (kept off the busy main card).
+function gameInfoHeader(e) {
+  const chip = (t) => {
+    if (!t) return '';
+    const label = escapeHtml(t.short || t.name || t.abbr || 'TBD');
+    const logo = t.logo ? `<img src="${escapeHtml(t.logo)}" alt="" loading="lazy" />` : '';
+    // Only resolvable teams open a sheet; placeholders render flat.
+    if (t.abbr && ABBR_TO_GUARDIAN[t.abbr]) {
+      return `<button type="button" class="game-team" data-team-abbr="${escapeHtml(t.abbr)}">${logo}<span>${label}</span><span class="game-team-go" aria-hidden="true">›</span></button>`;
+    }
+    return `<span class="game-team static">${logo}<span>${label}</span></span>`;
+  };
+  const share = e.state !== 'pre'
+    ? `<button type="button" class="share-btn" data-share="${escapeHtml(e.id)}" aria-label="Share result" title="Share">${SHARE_ICON}</button>`
+    : '';
+  return `
+    <div class="game-info-head">
+      <div class="game-teams-row">${chip(e.home)}${chip(e.away)}</div>
+      ${share}
+    </div>`;
+}
+
+// American moneyline → implied probability (0–1).
+function impliedFromMoneyline(ml) {
+  if (ml == null || !Number.isFinite(ml)) return null;
+  return ml > 0 ? 100 / (ml + 100) : -ml / (-ml + 100);
+}
+
+// Bookmaker win/draw/win bar, normalised to remove the overround. Pre + live
+// only (a finished result makes pre-match odds moot).
+function oddsWidget(e) {
+  if (e.state === 'post') return '';
+  const o = state.stats[e.id]?.odds;
+  if (!o) return '';
+  const hc = safeHex(e.home?.color) || 'var(--accent)';
+  const rawH = safeHex(e.home?.color);
+  const rawA = safeHex(e.away?.color);
+  let ac = rawA || '#5a8bd6';
+  if (rawH && rawA && colorsClash(rawH, rawA)) ac = `color-mix(in srgb, ${rawA} 42%, #ffffff)`;
+  const seg = (pct, cls, style) =>
+    pct > 0 ? `<div class="odds-seg ${cls}" style="width:${pct}%;${style || ''}"></div>` : '';
+  const leg = (pct, label, color) =>
+    `<span class="odds-leg"><span class="odds-dot" style="background:${color}"></span><b>${pct}%</b> ${escapeHtml(label)}</span>`;
+  return `
+    <div class="odds">
+      <h3 class="stats-section-title">Win probability</h3>
+      <div class="odds-bar" aria-hidden="true">
+        ${seg(o.home, 'home', `background:${hc}`)}
+        ${o.hasDraw ? seg(o.draw, 'draw', '') : ''}
+        ${seg(o.away, 'away', `background:${ac}`)}
+      </div>
+      <div class="odds-legend">
+        ${leg(o.home, e.home?.short || e.home?.abbr || 'Home', hc)}
+        ${o.hasDraw ? leg(o.draw, 'Draw', 'var(--muted)') : ''}
+        ${leg(o.away, e.away?.short || e.away?.abbr || 'Away', ac)}
+      </div>
+      <p class="odds-src">Implied by ${escapeHtml(o.provider || 'bookmaker')} odds${o.live ? ' · live' : ''}</p>
+    </div>`;
 }
 
 async function shareMatch(id) {
@@ -2887,11 +2951,12 @@ async function ensureStats(eventId) {
     const rows = extractStatRows(data);
     const timeline = extractTimeline(data);
     const lineups = extractLineups(data);
+    const odds = extractOdds(data, ev);
     const info = {
       attendance: data?.gameInfo?.attendance || 0,
       referee: data?.gameInfo?.officials?.[0]?.displayName || '',
     };
-    state.stats[eventId] = { rows, timeline, lineups, info, fetchedAt: Date.now() };
+    state.stats[eventId] = { rows, timeline, lineups, info, odds, fetchedAt: Date.now() };
     saveStatsCache();
     // Re-render if this match is on screen: expanded in a list, or the live
     // tab (where live matches are force-expanded but not in state.expanded).
@@ -2966,6 +3031,38 @@ function extractTimeline(data) {
   }
   entries.sort((a, b) => a.clockValue - b.clockValue);
   return entries;
+}
+
+// Bookmaker odds → normalised win/draw/win percentages. ESPN's summary carries
+// moneylines in `odds` / `pickcenter`; we convert each to an implied
+// probability and divide out the overround so the three sum to 100.
+function extractOdds(data, ev) {
+  const o = (data?.odds && data.odds[0]) || (data?.pickcenter && data.pickcenter[0]);
+  if (!o) return null;
+  const h = impliedFromMoneyline(o.homeTeamOdds?.moneyLine);
+  const a = impliedFromMoneyline(o.awayTeamOdds?.moneyLine);
+  const d = impliedFromMoneyline(o.drawOdds?.moneyLine);
+  if (h == null || a == null) return null;
+  const draw = d == null ? 0 : d;
+  const sum = h + a + draw;
+  if (sum <= 0) return null;
+  // Largest-remainder rounding so home + draw + away always total exactly 100
+  // (independent Math.round can land on 99 or 101 and leave a gap in the bar).
+  const raw = [h, a, draw].map((x) => (x / sum) * 100);
+  const out = raw.map(Math.floor);
+  let rem = 100 - out.reduce((s, v) => s + v, 0);
+  const byFrac = raw
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((p, q) => q.frac - p.frac);
+  for (let k = 0; k < byFrac.length && rem > 0; k++, rem--) out[byFrac[k].i]++;
+  return {
+    home: out[0],
+    away: out[1],
+    draw: out[2],
+    hasDraw: d != null,
+    provider: o.provider?.name || '',
+    live: ev?.state === 'in',
+  };
 }
 
 function extractLineups(data) {
