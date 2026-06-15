@@ -1387,39 +1387,23 @@ dialog:not([open]) { display: none !important; }
 }
 .share-btn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--surface-2)); }
 
-/* --- Expanded game-info header: tappable team chips + share --- */
+/* --- Expanded game-info header: hint + share --- */
 .game-info-head {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 14px;
 }
-.game-teams-row {
-  display: flex;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  flex-wrap: wrap;
+.game-info-head .spacer { flex: 1; }
+.game-info-hint { font-size: 11.5px; color: var(--muted); }
+/* Once a card is open, its team names become tappable (→ team sheet). */
+.match.expanded .team[data-team-abbr] { cursor: pointer; }
+.match.expanded .team[data-team-abbr] .team-name {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--text) 35%, transparent);
 }
-.game-team {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  min-width: 0;
-}
-.game-team.static { cursor: default; opacity: 0.85; }
-.game-team img { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
-.game-team > span:not(.game-team-go) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.game-team-go { color: var(--accent); font-weight: 800; }
-.game-team:hover { border-color: var(--accent); }
+.match.expanded .team[data-team-abbr]:hover .team-name { text-decoration-style: solid; }
 
 /* --- Win-probability bar (bookmaker odds) --- */
 .odds { margin-bottom: 18px; }

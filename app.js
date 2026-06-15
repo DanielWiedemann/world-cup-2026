@@ -591,14 +591,19 @@ matchesEl.addEventListener('click', (e) => {
     onMotmPick(motmBtn);
     return;
   }
-  // Team tap → team sheet — only from the group tables and from the team
-  // chips INSIDE the expanded game info. Tapping a team on a match card just
-  // opens the game info (handled by the card-expand fall-through below).
-  const teamEl = e.target.closest('.gt-team[data-team-abbr], .game-team[data-team-abbr]');
+  // Team tap → team sheet. Group tables always open it. On a match card it
+  // opens ONLY once the card is expanded; while collapsed the tap falls
+  // through to expand the card (so a card tap shows the game info first).
+  const teamEl = e.target.closest('.team[data-team-abbr], .gt-team[data-team-abbr]');
   if (teamEl && teamEl.dataset.teamAbbr) {
-    e.stopPropagation();
-    openTeamDialog(teamEl.dataset.teamAbbr);
-    return;
+    const card = teamEl.closest('.match');
+    const expandedCard = card && card.classList.contains('expanded');
+    if (teamEl.classList.contains('gt-team') || expandedCard) {
+      e.stopPropagation();
+      openTeamDialog(teamEl.dataset.teamAbbr);
+      return;
+    }
+    // collapsed match card → let it fall through to the card-expand handler
   }
   // Player badge → open overlay (timeline, pitch, or scorer list).
   const badge = e.target.closest('.tl-badge.photo, .pp-badge.photo, .sc-photo[data-player-photo]');
@@ -1476,9 +1481,13 @@ function teamMarkup(t) {
   const logo = t.logo
     ? `<img class="logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
     : `<div class="logo placeholder">${escapeHtml((t.abbr || '?').slice(0, 3))}</div>`;
-  // No team-sheet tap here any more — tapping a team on a card opens the game
-  // info (the team sheet lives behind the chips inside that game info).
-  return `<div class="team">${logo}<span class="team-name">${escapeHtml(t.short || t.name || '')}</span></div>`;
+  // data-team-abbr marks a resolvable team. On a COLLAPSED card a tap just
+  // expands the card; once the card is OPEN, tapping the team opens its sheet
+  // (handled in the matchesEl click listener).
+  const team = t.abbr && ABBR_TO_GUARDIAN[t.abbr]
+    ? ` data-team-abbr="${escapeHtml(t.abbr)}"`
+    : '';
+  return `<div class="team"${team}>${logo}<span class="team-name">${escapeHtml(t.short || t.name || '')}</span></div>`;
 }
 
 function matchAccent(e) {
@@ -1580,25 +1589,21 @@ function matchCard(e, { hero = false, forceExpand = false } = {}) {
   `;
 }
 
-// Header for the expanded game info: tappable team chips (→ team sheet) and
-// the share button (kept off the busy main card).
+// Header for the expanded game info: a hint that the teams up top are tappable
+// (→ team sheet), plus the share button (kept off the busy main card).
 function gameInfoHeader(e) {
-  const chip = (t) => {
-    if (!t) return '';
-    const label = escapeHtml(t.short || t.name || t.abbr || 'TBD');
-    const logo = t.logo ? `<img src="${escapeHtml(t.logo)}" alt="" loading="lazy" />` : '';
-    // Only resolvable teams open a sheet; placeholders render flat.
-    if (t.abbr && ABBR_TO_GUARDIAN[t.abbr]) {
-      return `<button type="button" class="game-team" data-team-abbr="${escapeHtml(t.abbr)}">${logo}<span>${label}</span><span class="game-team-go" aria-hidden="true">›</span></button>`;
-    }
-    return `<span class="game-team static">${logo}<span>${label}</span></span>`;
-  };
+  const tappable = ABBR_TO_GUARDIAN[e.home?.abbr] || ABBR_TO_GUARDIAN[e.away?.abbr];
+  const hint = tappable
+    ? '<span class="game-info-hint">Tap a country above for squad &amp; stats</span>'
+    : '';
   const share = e.state !== 'pre'
     ? `<button type="button" class="share-btn" data-share="${escapeHtml(e.id)}" aria-label="Share result" title="Share">${SHARE_ICON}</button>`
     : '';
+  if (!hint && !share) return '';
   return `
     <div class="game-info-head">
-      <div class="game-teams-row">${chip(e.home)}${chip(e.away)}</div>
+      ${hint}
+      <span class="spacer"></span>
       ${share}
     </div>`;
 }
