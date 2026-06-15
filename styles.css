@@ -122,6 +122,9 @@ html, body {
   font-weight: 600;
 }
 .search-input::placeholder { color: rgba(255, 255, 255, 0.55); font-weight: 500; }
+/* Hide the browser's native clear (×) — we have our own button. */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
 .search-clear {
   flex-shrink: 0;
   width: 26px;
@@ -797,7 +800,10 @@ body.live-mode .app-header {
   color: var(--text);
   border-radius: 999px;
   padding: 2px 7px;
-  min-width: 32px;
+  /* Uniform width so every pill (incl. stoppage like 45'+5') lines up — same
+     left edge, same right edge, and the dashed connector stays aligned. */
+  min-width: 50px;
+  box-sizing: border-box;
   text-align: center;
   position: relative;
   z-index: 1;
