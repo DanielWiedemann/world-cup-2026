@@ -1513,6 +1513,7 @@ function groupChip(e) {
 }
 
 const SHARE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 1 0-3-3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 1 0 0 6c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65a2.92 2.92 0 1 0 2.92-2.92z"/></svg>`;
+const LOCK_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm3 8H9V6a3 3 0 0 1 6 0v3z"/></svg>`;
 
 function flagWatermarks(e) {
   const h = e.home?.logo
@@ -2248,8 +2249,9 @@ function renderPredictionPanel(e) {
         <div class="pred-locked">
           <span class="pred-locked-score">${escapeHtml(e.home?.short || e.home?.abbr || '?')} <strong>${committed.h}–${committed.a}</strong> ${escapeHtml(e.away?.short || e.away?.abbr || '?')}</span>
           ${committed.motm ? `<span class="pred-locked-motm">⭐ ${escapeHtml(motmName)}</span>` : ''}
+          <span class="pred-lock-badge">${LOCK_ICON} Locked</span>
         </div>
-        <p class="pred-hint">🔒 Prediction locked — auto-scored at full time. Exact 3 pts · result 1 pt · MOTM +2.</p>
+        <p class="pred-hint">Scores automatically at full time.</p>
       </div>`;
   }
   // DRAFT editor — adjust freely, then Save to lock it in.
@@ -2428,8 +2430,20 @@ function renderPredictionsList() {
         </div>`;
     })
     .join('');
+  const summaryEl = $('#predictions-summary');
+  const made = state.events.filter((e) => getPrediction(e.id));
+  const settled = made.filter((e) => finalPoints(e) != null).length;
+  if (summaryEl) {
+    summaryEl.innerHTML = made.length
+      ? `<div class="pred-summary-total"><span class="pred-summary-num">${totalPredictionPoints()}</span><span class="pred-summary-unit">pts</span></div>
+         <div class="pred-summary-meta">
+           <span>${made.length} prediction${made.length === 1 ? '' : 's'}${settled ? ` · ${settled} scored` : ''}</span>
+           <span class="pred-summary-legend">Exact <b>3</b> · Result <b>1</b> · MOTM <b>+2</b></span>
+         </div>`
+      : '';
+  }
   predictionsList.innerHTML =
-    rows || '<p class="empty">No predictions yet — expand an upcoming match to call the score.</p>';
+    rows || '<p class="empty">No predictions yet — open an upcoming match, set a score and save it.</p>';
 }
 
 predictionsChip?.addEventListener('click', () => {

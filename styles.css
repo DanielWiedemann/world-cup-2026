@@ -85,14 +85,21 @@ html, body {
 
 .meta-row {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   font-size: 12px;
-  opacity: 0.85;
-  margin-top: 4px;
+  margin-top: 8px;
   gap: 12px;
 }
-.tz-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.status { font-style: italic; }
+.tz-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+}
+.status { font-style: italic; opacity: 0.8; }
 
 /* Expanding team search. Hidden until the search icon is tapped. */
 .search-bar {
@@ -1700,9 +1707,24 @@ tr.qual-direct .gt-name { color: var(--text); }
   gap: 6px;
   margin: 10px 0;
 }
-.pred-locked-score { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.pred-locked-score strong { font-size: 24px; font-weight: 800; margin: 0 4px; }
+.pred-locked-score { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pred-locked-score strong { font-size: 25px; font-weight: 800; margin: 0 5px; }
 .pred-locked-motm { font-size: 12.5px; color: #ffd45c; }
+.pred-lock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 
 /* Win-probability gated state (shown until a prediction is saved) */
 .odds.locked { text-align: center; }
@@ -1865,20 +1887,53 @@ tr.qual-direct .gt-name { color: var(--text); }
 .pred-chip-motm { color: #ffd45c; }
 
 .predictions-chip {
-  border: 1px solid rgba(255,255,255,0.25);
-  background: rgba(255,255,255,0.12);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.16);
   color: #fff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   border-radius: 999px;
-  padding: 2px 9px;
+  padding: 6px 13px;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
+  transition: background 0.15s ease;
 }
-.predictions-chip:hover { background: rgba(255,255,255,0.2); }
+.predictions-chip:hover { background: rgba(255,255,255,0.26); }
+.predictions-chip b { font-weight: 800; }
+
+/* Total-score summary at the top of the predictions popup. */
+.pred-summary { margin: 0 0 14px; }
+.pred-summary:empty { display: none; }
+.pred-summary-total {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.pred-summary-num {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.pred-summary-unit { font-size: 15px; font-weight: 700; color: var(--muted); }
+.pred-summary-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.pred-summary-legend b { color: var(--text); }
 
 .predictions-list {
-  max-height: 60vh;
+  max-height: 56vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

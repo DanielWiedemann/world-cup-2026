@@ -42,7 +42,7 @@
     </div>
     <div class="meta-row">
       <span id="tz-label" class="tz-label"></span>
-      <button id="predictions-chip" class="predictions-chip" hidden>🎯 <span id="predictions-points">0</span> pts</button>
+      <button id="predictions-chip" class="predictions-chip" hidden>🎯 <b id="predictions-points">0</b> pts</button>
       <span id="status" class="status"></span>
     </div>
     <div id="search-bar" class="search-bar" hidden>
@@ -88,7 +88,7 @@
     <button type="button" id="predictions-close" class="player-dialog-close" aria-label="Close">×</button>
     <div class="prefs-body">
       <h2 id="predictions-title">🎯 Your predictions</h2>
-      <p class="prefs-sub" id="predictions-sub">Exact score = 3 pts · Correct result = 1 pt · MOTM +2</p>
+      <div id="predictions-summary" class="pred-summary"></div>
       <div id="predictions-list" class="predictions-list"></div>
     </div>
   </dialog>
