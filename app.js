@@ -2089,34 +2089,21 @@ function lastNameKey(s) {
     .pop();
 }
 
-// Did the predicted Man of the Match score a goal? Needs the match's loaded
-// timeline + lineups. Returns true/false, or null if unresolved (no pick, or
-// stats not loaded yet).
-function motmScored(e) {
-  const p = getPrediction(e.id);
-  if (!p?.motm) return null;
-  const entry = state.stats[e.id];
-  if (!entry || !entry.timeline) return null;
-  for (const t of entry.timeline) {
-    if (!/goal$/.test(t.kind)) continue;
-    const side = timelineSide(t, e);
-    const abbr = side === 'home' ? e.home?.abbr : e.away?.abbr;
-    if (abbr !== p.motm.abbr) continue;
-    const rp = findRosterPlayer(entry.lineups, side, t.athleteId, t.player);
-    if (rp?.jersey && String(rp.jersey) === String(p.motm.jersey)) return true;
-    if (t.player && p.motm.name && lastNameKey(t.player) === lastNameKey(p.motm.name)) return true;
-  }
-  return false;
-}
-
-// +2 if the MOTM pick scored, 0 if resolved-and-didn't, null if no pick /
-// unresolved.
+// +3 if the predicted player IS the match's Superior Player of the Match (our
+// derived standout). 0 if resolved-and-wrong, null if not resolved yet.
 function motmBonus(e) {
   const p = getPrediction(e.id);
   if (!p?.motm) return null;
-  const scored = motmScored(e);
-  if (scored == null) return null;
-  return scored ? 2 : 0;
+  const sp = superiorPlayer(e);
+  if (sp) {
+    const hit = p.motm.abbr === sp.abbr && lastNameKey(p.motm.name) === lastNameKey(sp.name);
+    return hit ? 3 : 0;
+  }
+  // No standout derivable. If the match is over AND its detail is loaded (a
+  // genuine goalless game), the pick can't be right → 0; else still pending.
+  const entry = state.stats[e.id];
+  const loaded = entry && entry.timeline && !entry.loading && !entry.error;
+  return e.state === 'post' && loaded ? 0 : null;
 }
 
 // Combined running points for the card chip (live = provisional).
@@ -2156,26 +2143,33 @@ function resolvePredictionStats() {
   }
 }
 
-// ESPN has no official "man of the match", so we surface the next best thing
-// from the timeline: the match's top scorer (most goals; earliest goal breaks
-// a tie). Own goals don't count. Returns null for a goalless game.
-function matchTopScorer(e) {
+// ESPN's feed has no official "Superior Player of the Match" award, so we
+// derive the match's standout from the timeline: goals (weighted) plus
+// assists. Own goals don't count. Returns null for a goalless game (can't be
+// determined from the data).
+function superiorPlayer(e) {
   const entry = state.stats[e.id];
   if (!entry || !entry.timeline) return null;
-  const tally = new Map();
+  const tally = new Map(); // lastName|abbr -> { name, abbr, goals, assists, first }
+  const bump = (name, abbr, field, clock) => {
+    if (!name || name === '?') return;
+    const key = `${lastNameKey(name)}|${abbr || ''}`;
+    const cur = tally.get(key) || { name, abbr, goals: 0, assists: 0, first: Infinity };
+    cur[field] += 1;
+    if (field === 'goals' && clock != null) cur.first = Math.min(cur.first, clock);
+    tally.set(key, cur);
+  };
   for (const t of entry.timeline) {
     if (t.kind !== 'goal' && t.kind !== 'penalty-goal') continue;
-    const name = t.player;
-    if (!name || name === '?') continue;
     const side = timelineSide(t, e);
     const abbr = side === 'home' ? e.home?.abbr : e.away?.abbr;
-    const cur = tally.get(name) || { name, abbr, goals: 0, first: Infinity };
-    cur.goals += 1;
-    cur.first = Math.min(cur.first, t.clockValue ?? Infinity);
-    tally.set(name, cur);
+    bump(t.player, abbr, 'goals', t.clockValue);
+    if (t.assist) bump(t.assist, abbr, 'assists');
   }
   if (!tally.size) return null;
-  return [...tally.values()].sort((a, b) => b.goals - a.goals || a.first - b.first)[0];
+  return [...tally.values()]
+    .map((v) => ({ ...v, score: v.goals * 2 + v.assists }))
+    .sort((a, b) => b.score - a.score || b.goals - a.goals || a.first - b.first)[0];
 }
 
 const POS_RANK = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
@@ -2272,7 +2266,7 @@ function renderPredictionPanel(e) {
     homeSquad.length || awaySquad.length
       ? `
     <div class="motm-picker">
-      <h4 class="motm-title">⭐ Man of the Match <span class="motm-bonus">+2 if they score</span></h4>
+      <h4 class="motm-title">⭐ Superior Player of the Match <span class="motm-bonus">+3 if you call it</span></h4>
       ${motmTeamSection(e, e.home, homeSquad, motm)}
       ${motmTeamSection(e, e.away, awaySquad, motm)}
     </div>`
@@ -2287,7 +2281,7 @@ function renderPredictionPanel(e) {
       </div>
       ${motmSection}
       <button type="button" class="pred-save" data-ev="${escapeHtml(e.id)}">Save prediction</button>
-      <p class="pred-hint">Exact 3 pts · result 1 pt · MOTM +2. <strong>Predictions are final once saved</strong>, and saving reveals the win probability.</p>
+      <p class="pred-hint">Predictions are final once saved.<br>Saving reveals the win probability.</p>
     </div>`;
 }
 
@@ -2301,15 +2295,15 @@ function renderPredictionStatus(e) {
   const motmState =
     p.motm
       ? motmBonus(e) == null
-        ? `· MOTM ${escapeHtml(motmName)}`
+        ? `· SPOTM ${escapeHtml(motmName)}`
         : motmBonus(e) > 0
-        ? `· MOTM ${escapeHtml(motmName)} ✓`
-        : `· MOTM ${escapeHtml(motmName)} ✗`
+        ? `· SPOTM ${escapeHtml(motmName)} ✓`
+        : `· SPOTM ${escapeHtml(motmName)} ✗`
       : '';
   const label = e.state === 'post' ? 'Final' : 'So far';
-  const star = e.state === 'post' ? matchTopScorer(e) : null;
+  const star = e.state === 'post' ? superiorPlayer(e) : null;
   const starHtml = star
-    ? `<div class="pred-status-motm">⭐ Star man: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}${star.goals > 1 ? ` · ${star.goals} goals` : ''}</div>`
+    ? `<div class="pred-status-motm">⭐ Superior Player: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}</div>`
     : '';
   return `
     <div class="pred-status">
@@ -2407,10 +2401,11 @@ function renderPredictionsList() {
         t?.logo
           ? `<img class="predl-flag" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
           : '<span class="predl-flag placeholder"></span>';
-      // Actual standout once the match is over.
-      const star = e.state === 'post' ? matchTopScorer(e) : null;
+      // Actual Superior Player of the Match once the match is over.
+      const star = e.state === 'post' ? superiorPlayer(e) : null;
+      const correct = p.motm && star && p.motm.abbr === star.abbr && lastNameKey(p.motm.name) === lastNameKey(star.name);
       const starHtml = star
-        ? `<div class="predl-star">⭐ Star man: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}${star.goals > 1 ? ` · ${star.goals} goals` : ''}</div>`
+        ? `<div class="predl-star">⭐ Superior Player: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}${correct ? ' <span class="predl-star-hit">✓ your pick</span>' : ''}</div>`
         : '';
       return `
         <div class="predl-row">
@@ -2436,9 +2431,12 @@ function renderPredictionsList() {
   if (summaryEl) {
     summaryEl.innerHTML = made.length
       ? `<div class="pred-summary-total"><span class="pred-summary-num">${totalPredictionPoints()}</span><span class="pred-summary-unit">pts</span></div>
-         <div class="pred-summary-meta">
-           <span>${made.length} prediction${made.length === 1 ? '' : 's'}${settled ? ` · ${settled} scored` : ''}</span>
-           <span class="pred-summary-legend">Exact <b>3</b> · Result <b>1</b> · MOTM <b>+2</b></span>
+         <div class="pred-summary-meta">${made.length} prediction${made.length === 1 ? '' : 's'}${settled ? ` · ${settled} scored` : ''}</div>
+         <div class="pred-scoring">
+           <span class="pred-scoring-head">How points work</span>
+           <div class="pred-scoring-row"><span>Exact score</span><b>3 pts</b></div>
+           <div class="pred-scoring-row"><span>Correct result (win / draw / loss)</span><b>1 pt</b></div>
+           <div class="pred-scoring-row"><span>Superior Player of the Match</span><b>3 pts</b></div>
          </div>`
       : '';
   }

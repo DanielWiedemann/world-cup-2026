@@ -1931,6 +1931,37 @@ tr.qual-direct .gt-name { color: var(--text); }
   color: var(--muted);
 }
 .pred-summary-legend b { color: var(--text); }
+/* "How points work" key inside the popup. */
+.pred-scoring {
+  margin-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding-top: 10px;
+}
+.pred-scoring-head {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.pred-scoring-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+.pred-scoring-row > span { color: var(--text); }
+.pred-scoring-row b {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.predl-star-hit { color: var(--accent); font-weight: 700; }
 
 .predictions-list {
   max-height: 56vh;
