@@ -2038,6 +2038,10 @@ function renderBracketView() {
 // --- Predictions game -------------------------------------------------------
 
 const PREDICTIONS_KEY = 'wc2026.predictions.v1';
+// Superior Player of the Match is hidden until we have a reliable source for
+// the official award (ESPN doesn't expose it). All the SPOTM code is kept
+// intact and simply gated off this flag — flip to true to bring it back.
+const SHOW_SPOTM = false;
 
 function loadPredictions() {
   try {
@@ -2111,7 +2115,7 @@ function predictionTotal(e) {
   if (e.state === 'pre') return null;
   const sp = scorePoints(e);
   if (sp == null) return null;
-  return sp + (motmBonus(e) || 0);
+  return sp + (SHOW_SPOTM ? motmBonus(e) || 0 : 0);
 }
 
 // Final, locked points — only counts finished matches toward the header total.
@@ -2119,7 +2123,7 @@ function finalPoints(e) {
   if (e.state !== 'post') return null;
   const sp = scorePoints(e);
   if (sp == null) return null;
-  return sp + (motmBonus(e) || 0);
+  return sp + (SHOW_SPOTM ? motmBonus(e) || 0 : 0);
 }
 
 function totalPredictionPoints() {
@@ -2242,7 +2246,7 @@ function renderPredictionPanel(e) {
         <h3 class="stats-section-title">🎯 Your prediction</h3>
         <div class="pred-locked">
           <span class="pred-locked-score">${escapeHtml(e.home?.short || e.home?.abbr || '?')} <strong>${committed.h}–${committed.a}</strong> ${escapeHtml(e.away?.short || e.away?.abbr || '?')}</span>
-          ${committed.motm ? `<span class="pred-locked-motm">⭐ ${escapeHtml(motmName)}</span>` : ''}
+          ${SHOW_SPOTM && committed.motm ? `<span class="pred-locked-motm">⭐ ${escapeHtml(motmName)}</span>` : ''}
           <span class="pred-lock-badge">${LOCK_ICON} Locked</span>
         </div>
         <p class="pred-hint">Scores automatically at full time.</p>
@@ -2263,7 +2267,7 @@ function renderPredictionPanel(e) {
   const homeSquad = squadList(e.home?.abbr);
   const awaySquad = squadList(e.away?.abbr);
   const motmSection =
-    homeSquad.length || awaySquad.length
+    SHOW_SPOTM && (homeSquad.length || awaySquad.length)
       ? `
     <div class="motm-picker">
       <h4 class="motm-title">⭐ Superior Player of the Match <span class="motm-bonus">+3 if you call it</span></h4>
@@ -2293,7 +2297,7 @@ function renderPredictionStatus(e) {
   const total = predictionTotal(e);
   const motmName = p.motm ? p.motm.name.split(' ').pop() : '';
   const motmState =
-    p.motm
+    SHOW_SPOTM && p.motm
       ? motmBonus(e) == null
         ? `· SPOTM ${escapeHtml(motmName)}`
         : motmBonus(e) > 0
@@ -2301,7 +2305,7 @@ function renderPredictionStatus(e) {
         : `· SPOTM ${escapeHtml(motmName)} ✗`
       : '';
   const label = e.state === 'post' ? 'Final' : 'So far';
-  const star = e.state === 'post' ? superiorPlayer(e) : null;
+  const star = SHOW_SPOTM && e.state === 'post' ? superiorPlayer(e) : null;
   const starHtml = star
     ? `<div class="pred-status-motm">⭐ Superior Player: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}</div>`
     : '';
@@ -2394,7 +2398,7 @@ function renderPredictionsList() {
         pts == null
           ? '<span class="predl-pts pending">·</span>'
           : `<span class="predl-pts ${pts > 0 ? 'won' : 'lost'}">${pts > 0 ? '+' + pts : '0'}</span>`;
-      const motmHtml = p.motm
+      const motmHtml = SHOW_SPOTM && p.motm
         ? `<span class="predl-motm">⭐ ${escapeHtml(p.motm.name.split(' ').pop())}</span>`
         : '';
       const flag = (t) =>
@@ -2402,7 +2406,7 @@ function renderPredictionsList() {
           ? `<img class="predl-flag" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
           : '<span class="predl-flag placeholder"></span>';
       // Actual Superior Player of the Match once the match is over.
-      const star = e.state === 'post' ? superiorPlayer(e) : null;
+      const star = SHOW_SPOTM && e.state === 'post' ? superiorPlayer(e) : null;
       const correct = p.motm && star && p.motm.abbr === star.abbr && lastNameKey(p.motm.name) === lastNameKey(star.name);
       const starHtml = star
         ? `<div class="predl-star">⭐ Superior Player: <strong>${escapeHtml(star.name)}</strong>${star.abbr ? ` (${escapeHtml(star.abbr)})` : ''}${correct ? ' <span class="predl-star-hit">✓ your pick</span>' : ''}</div>`
@@ -2436,7 +2440,7 @@ function renderPredictionsList() {
            <span class="pred-scoring-head">How points work</span>
            <div class="pred-scoring-row"><span>Exact score</span><b>3 pts</b></div>
            <div class="pred-scoring-row"><span>Correct result (win / draw / loss)</span><b>1 pt</b></div>
-           <div class="pred-scoring-row"><span>Superior Player of the Match</span><b>3 pts</b></div>
+           ${SHOW_SPOTM ? '<div class="pred-scoring-row"><span>Superior Player of the Match</span><b>3 pts</b></div>' : ''}
          </div>`
       : '';
   }
