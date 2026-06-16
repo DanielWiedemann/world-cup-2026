@@ -1673,7 +1673,44 @@ tr.qual-direct .gt-name { color: var(--text); }
 }
 /* Colon sits level with the big score numbers (team label + 8px gap above). */
 .pred-x { font-size: 22px; color: var(--muted); font-weight: 300; align-self: flex-start; margin-top: 26px; line-height: 1; }
-.pred-hint { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+.pred-hint { font-size: 11px; color: var(--muted); margin: 10px 0 0; }
+.pred-hint strong { color: var(--text); }
+
+/* Save / lock the prediction */
+.pred-save {
+  margin: 14px auto 0;
+  display: block;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 22px;
+  background: var(--accent);
+  color: #04130d;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.pred-save:hover { filter: brightness(1.07); }
+
+/* Locked (saved) prediction — read-only */
+.pred-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+}
+.pred-locked-score { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pred-locked-score strong { font-size: 24px; font-weight: 800; margin: 0 4px; }
+.pred-locked-motm { font-size: 12.5px; color: #ffd45c; }
+
+/* Win-probability gated state (shown until a prediction is saved) */
+.odds.locked { text-align: center; }
+.odds-locked {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
 
 /* MOTM picker */
 .motm-picker {

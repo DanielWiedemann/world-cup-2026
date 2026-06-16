@@ -7,7 +7,7 @@ const TOURNAMENT_START = '2026-06-11';
 const TOURNAMENT_END = '2026-07-19';
 const CACHE_KEY = 'wc2026.events.v2'; // v2: events now carry team colors
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-const LIVE_POLL_MS = 30 * 1000; // 30 seconds while something's live
+const LIVE_POLL_MS = 15 * 1000; // poll every 15s while something's live
 const KICKOFF_WINDOW_MS = 10 * 60 * 1000; // open the LIVE tab 10 min before kickoff
 const LATE_WINDOW_MS = 30 * 60 * 1000; // keep it open up to 30 min past a late start
 
@@ -582,6 +582,13 @@ matchesEl.addEventListener('click', (e) => {
   if (stepBtn) {
     e.stopPropagation();
     onPredictionStep(stepBtn);
+    return;
+  }
+  // Save (lock) the prediction.
+  const saveBtn = e.target.closest('.pred-save');
+  if (saveBtn) {
+    e.stopPropagation();
+    onPredictionSave(saveBtn.dataset.ev);
     return;
   }
   // Man-of-the-Match pick.
@@ -1247,15 +1254,16 @@ async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
     render();
     resolvePredictionStats(); // pull timelines so final points + MOTM resolve
     if (predictionsDialog?.open) renderPredictionsList();
-    // GOAL! Celebrate any live match whose total just went up.
-    if (celebrate) {
-      for (const e of state.events) {
-        if (e.state !== 'in') continue;
-        const prev = prevTotals.get(e.id);
-        if (prev != null && totalGoals(e) > prev) {
-          celebrateGoal(e.id);
-          break; // one celebration per poll is plenty
-        }
+    // GOAL! A live match's total just went up — force-refresh its detail so
+    // "who scored" appears immediately (not on the next stats window), and
+    // celebrate once.
+    let celebrated = false;
+    for (const e of state.events) {
+      if (e.state !== 'in') continue;
+      const prev = prevTotals.get(e.id);
+      if (prev != null && totalGoals(e) > prev) {
+        ensureStats(e.id, { force: true });
+        if (celebrate && !celebrated) { celebrateGoal(e.id); celebrated = true; }
       }
     }
   } catch (err) {
@@ -1617,9 +1625,18 @@ function impliedFromMoneyline(ml) {
 // Bookmaker win/draw/win bar, normalised to remove the overround. Pre + live
 // only (a finished result makes pre-match odds moot).
 function oddsWidget(e) {
-  if (e.state === 'post') return '';
   const o = state.stats[e.id]?.odds;
-  if (!o) return '';
+  if (!o) return ''; // no bookmaker line for this match
+  // Gated behind a saved prediction: predict first, then the bar reveals (and
+  // stays visible afterwards, even once the game is over).
+  if (!getPrediction(e.id)) {
+    return e.state === 'pre'
+      ? `<div class="odds locked">
+           <h3 class="stats-section-title">Win probability</h3>
+           <p class="odds-locked">🔒 Save your prediction below to reveal the win probability.</p>
+         </div>`
+      : '';
+  }
   const hc = safeHex(e.home?.color) || 'var(--accent)';
   const rawH = safeHex(e.home?.color);
   const rawA = safeHex(e.away?.color);
@@ -2029,10 +2046,19 @@ function loadPredictions() {
   }
 }
 let predictions = loadPredictions();
+// In-progress predictions the user is still editing. NOT persisted and NOT
+// counted anywhere — a prediction only becomes "made" (locked, scored, and
+// odds-revealing) once the user taps Save, which moves it into `predictions`.
+let draftPredictions = {};
 
+// A *committed* (saved + locked) prediction. This is the only kind that counts.
 function getPrediction(eventId) {
   const p = predictions[eventId];
   return p && Number.isFinite(p.h) && Number.isFinite(p.a) ? p : null;
+}
+
+function getDraft(eventId) {
+  return draftPredictions[eventId] || { h: 0, a: 0 };
 }
 
 function savePredictions() {
@@ -2212,19 +2238,32 @@ function motmChip(e, abbr, pl, motm) {
 }
 
 function renderPredictionPanel(e) {
-  const pred = getPrediction(e.id);
-  const p = pred || { h: 0, a: 0 };
-  const saved = !!pred;
+  const committed = getPrediction(e.id);
+  // LOCKED view — a saved prediction can't be changed.
+  if (committed) {
+    const motmName = committed.motm ? committed.motm.name.split(' ').pop() : '';
+    return `
+      <div class="stats pred-panel">
+        <h3 class="stats-section-title">🎯 Your prediction</h3>
+        <div class="pred-locked">
+          <span class="pred-locked-score">${escapeHtml(e.home?.short || e.home?.abbr || '?')} <strong>${committed.h}–${committed.a}</strong> ${escapeHtml(e.away?.short || e.away?.abbr || '?')}</span>
+          ${committed.motm ? `<span class="pred-locked-motm">⭐ ${escapeHtml(motmName)}</span>` : ''}
+        </div>
+        <p class="pred-hint">🔒 Prediction locked — auto-scored at full time. Exact 3 pts · result 1 pt · MOTM +2.</p>
+      </div>`;
+  }
+  // DRAFT editor — adjust freely, then Save to lock it in.
+  const p = getDraft(e.id);
   const side = (team, key) => `
     <div class="pred-side">
       <span class="pred-team">${escapeHtml(team?.short || team?.abbr || '?')}</span>
       <div class="pred-ctrl">
         <button type="button" class="pred-step" data-ev="${escapeHtml(e.id)}" data-side="${key}" data-delta="-1" aria-label="decrease">−</button>
-        <span class="pred-val">${p[key]}</span>
+        <span class="pred-val">${p[key] || 0}</span>
         <button type="button" class="pred-step" data-ev="${escapeHtml(e.id)}" data-side="${key}" data-delta="1" aria-label="increase">+</button>
       </div>
     </div>`;
-  const motm = pred?.motm;
+  const motm = p.motm;
   const homeSquad = squadList(e.home?.abbr);
   const awaySquad = squadList(e.away?.abbr);
   const motmSection =
@@ -2245,7 +2284,8 @@ function renderPredictionPanel(e) {
         ${side(e.away, 'a')}
       </div>
       ${motmSection}
-      <p class="pred-hint">${saved ? 'Saved — auto-scored at full time.' : 'Tap + / − to set a score.'} Exact 3 pts · result 1 pt · MOTM +2.</p>
+      <button type="button" class="pred-save" data-ev="${escapeHtml(e.id)}">Save prediction</button>
+      <p class="pred-hint">Exact 3 pts · result 1 pt · MOTM +2. <strong>Predictions are final once saved</strong>, and saving reveals the win probability.</p>
     </div>`;
 }
 
@@ -2279,21 +2319,21 @@ function renderPredictionStatus(e) {
 
 function onPredictionStep(btn) {
   const id = btn.dataset.ev;
+  if (getPrediction(id)) return; // already saved → locked, can't change
   const side = btn.dataset.side;
   const delta = parseInt(btn.dataset.delta, 10);
-  const cur = predictions[id] || { h: 0, a: 0 };
+  const cur = { ...getDraft(id) };
   cur.h = cur.h || 0;
   cur.a = cur.a || 0;
   cur[side] = Math.max(0, Math.min(19, (cur[side] || 0) + delta));
-  predictions[id] = cur;
-  savePredictions();
-  render();
-  updatePredictionsChip();
+  draftPredictions[id] = cur;
+  render(); // draft only — nothing persisted yet
 }
 
 function onMotmPick(chip) {
   const id = chip.dataset.ev;
-  const cur = predictions[id] || { h: 0, a: 0 };
+  if (getPrediction(id)) return; // locked
+  const cur = { ...getDraft(id) };
   cur.h = cur.h || 0;
   cur.a = cur.a || 0;
   const pick = {
@@ -2306,10 +2346,26 @@ function onMotmPick(chip) {
   } else {
     cur.motm = pick;
   }
-  predictions[id] = cur;
+  draftPredictions[id] = cur;
+  render();
+}
+
+// Commit the draft → permanent, locked prediction. This is what unlocks the
+// win probability and what gets scored.
+function onPredictionSave(id) {
+  if (getPrediction(id)) return; // already saved
+  const d = getDraft(id);
+  predictions[id] = {
+    h: d.h || 0,
+    a: d.a || 0,
+    ...(d.motm ? { motm: d.motm } : {}),
+    locked: true,
+  };
   savePredictions();
+  delete draftPredictions[id];
   render();
   updatePredictionsChip();
+  ensureStats(id); // make sure the odds are loaded so the bar can reveal
 }
 
 const predictionsChip = $('#predictions-chip');
@@ -2647,14 +2703,19 @@ function renderTimeline(e, timeline, lineups) {
   // Single chronologically-ordered list; each row alternates side based on
   // which team the event belongs to.
   const items = timeline.map((t) => {
-    const side = timelineSide(t, e);
-    const abbr = side === 'home' ? homeAbbr : awayAbbr;
-    const rosterPlayer = findRosterPlayer(lineups, side, t.athleteId, t.player);
-    const badge = playerBadge(rosterPlayer, abbr, t.player);
+    const side = timelineSide(t, e); // the team the goal counts FOR
+    // An own goal is credited to the beneficiary, but the scorer plays for the
+    // OTHER team — look his photo/jersey up there, or it comes back blank.
+    const ownGoal = t.kind === 'own-goal';
+    const playerSide = ownGoal ? (side === 'home' ? 'away' : 'home') : side;
+    const playerAbbr = playerSide === 'home' ? homeAbbr : awayAbbr;
+    const rosterPlayer = findRosterPlayer(lineups, playerSide, t.athleteId, t.player);
+    const badge = playerBadge(rosterPlayer, playerAbbr, t.player);
     const glyph = TIMELINE_GLYPH[t.kind] || '';
     const tag = TIMELINE_TAG[t.kind] || '';
     const subPrefix = t.kind === 'sub' ? 'for' : 'assist';
-    const assistHtml = t.assist
+    // ESPN lists a second participant on own goals that isn't really an assist.
+    const assistHtml = t.assist && !ownGoal
       ? `<span class="tl-assist">${subPrefix} ${escapeHtml(t.assist)}</span>`
       : '';
     const minute = escapeHtml(t.minute || "—'");
@@ -2934,15 +2995,15 @@ function saveStatsCache() {
   } catch {}
 }
 
-async function ensureStats(eventId) {
+async function ensureStats(eventId, { force = false } = {}) {
   const ev = state.events.find((e) => e.id === eventId);
   const cached = state.stats[eventId];
   const isLive = ev && ev.state === 'in';
   const isFresh =
     cached &&
     cached.fetchedAt &&
-    Date.now() - cached.fetchedAt < (isLive ? 30 * 1000 : STATS_CACHE_TTL_MS);
-  if (cached && isFresh && !cached.error) return;
+    Date.now() - cached.fetchedAt < (isLive ? 12 * 1000 : STATS_CACHE_TTL_MS);
+  if (!force && cached && isFresh && !cached.error) return;
   if (cached && cached.loading) return;
   // Error backoff: a failed fetch (e.g. ESPN 404 before a boxscore exists at
   // kickoff, or offline) is treated as fresh for 60s. Without this, the live
@@ -3003,10 +3064,10 @@ function extractTimeline(data) {
     const t = p?.type?.type || '';
     const text = p?.type?.text || '';
     let kind = null;
-    if (t === 'goal' || /^goal/i.test(text) || p?.scoringPlay) {
-      kind = /own goal/i.test(text)
-        ? 'own-goal'
-        : /penalty/i.test(text) && !/saved|missed/i.test(text)
+    if (t === 'own-goal' || /own[\s-]?goal/i.test(text)) {
+      kind = 'own-goal';
+    } else if (t === 'goal' || /^goal/i.test(text) || p?.scoringPlay) {
+      kind = /penalty/i.test(text) && !/saved|missed/i.test(text)
         ? 'penalty-goal'
         : 'goal';
     } else if (/penalt/i.test(text) && /(miss|saved|wide|post|over)/i.test(text)) {
