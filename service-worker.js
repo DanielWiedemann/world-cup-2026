@@ -1,4 +1,4 @@
-const CACHE = 'wc2026-v41';
+const CACHE = 'wc2026-v42';
 const SHELL = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const SHELL = [
   './app.js',
   './manifest.webmanifest',
   './photos.json',
+  './favicon.ico',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
