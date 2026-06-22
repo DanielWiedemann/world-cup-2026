@@ -879,8 +879,12 @@ body.live-mode .app-header {
   gap: 4px;
   flex-shrink: 0;
 }
+/* PEN / OG / PEN-MISS tag on its own line under the name (so it never
+   competes with the name for the narrow column width). */
+.tl-tagline { margin-top: 3px; line-height: 1; }
 .tl-tag {
   flex-shrink: 0;
+  display: inline-block;
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.04em;

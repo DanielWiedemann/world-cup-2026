@@ -1341,6 +1341,30 @@ function fireConfetti(durationMs = 2000) {
   })(t0);
 }
 
+// A push notification opens the app with ?match=<eventId> — jump to that game,
+// expand it, and scroll to it. Fires once, as soon as the event is loaded.
+let deepLinkHandled = false;
+function handleMatchDeepLink() {
+  if (deepLinkHandled) return;
+  const id = new URLSearchParams(location.search).get('match');
+  if (!id) { deepLinkHandled = true; return; }
+  const ev = state.events.find((e) => e.id === id);
+  if (!ev) return; // events not loaded yet — try again on the next render
+  deepLinkHandled = true;
+  userNavigated = true;
+  const liveTabExists = !!filtersBar.querySelector('.filter[data-filter="live"]');
+  setFilter(ev.state === 'in' && liveTabExists ? 'live' : 'all');
+  state.expanded.add(id);
+  if (ev.state !== 'pre') ensureStats(id);
+  render();
+  requestAnimationFrame(() => {
+    const card = matchesEl.querySelector(`.match[data-event-id="${CSS.escape(id)}"]`);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  // Drop the param so a manual refresh doesn't keep forcing this match.
+  try { history.replaceState(null, '', location.pathname); } catch {}
+}
+
 async function load({ force = false } = {}) {
   if (state.loading) return;
   state.loading = true;
@@ -1350,6 +1374,7 @@ async function load({ force = false } = {}) {
     state.events = cached.events;
     setUpdated(cached.fetchedAt);
     render();
+    handleMatchDeepLink();
     state.loading = false;
     // The full fixture cache is still warm, but recent results may have moved
     // on (a final score, a kickoff). Do a cheap recent-dates refresh so the
@@ -1362,6 +1387,7 @@ async function load({ force = false } = {}) {
     state.events = cached.events;
     setUpdated(cached.fetchedAt);
     render();
+    handleMatchDeepLink();
   }
 
   setStatus('Updating…');
@@ -1384,6 +1410,7 @@ async function load({ force = false } = {}) {
     setStatus('');
     syncLiveTab();
     render();
+    handleMatchDeepLink();
     resolvePredictionStats();
   } catch (err) {
     console.error(err);
@@ -2720,12 +2747,19 @@ function renderTimeline(e, timeline, lineups) {
   // which team the event belongs to.
   const items = timeline.map((t) => {
     const side = timelineSide(t, e); // the team the goal counts FOR
-    // An own goal is credited to the beneficiary, but the scorer plays for the
-    // OTHER team — look his photo/jersey up there, or it comes back blank.
     const ownGoal = t.kind === 'own-goal';
-    const playerSide = ownGoal ? (side === 'home' ? 'away' : 'home') : side;
-    const playerAbbr = playerSide === 'home' ? homeAbbr : awayAbbr;
-    const rosterPlayer = findRosterPlayer(lineups, playerSide, t.athleteId, t.player);
+    // An own goal is credited to the beneficiary while the scorer plays for the
+    // other team, and ESPN isn't consistent about which side it tags — so look
+    // the player up in EITHER roster (also covers subs) and take the team where
+    // he's found, otherwise the photo comes back blank ("?").
+    const preferSide = ownGoal ? (side === 'home' ? 'away' : 'home') : side;
+    let rosterPlayer = findRosterPlayer(lineups, preferSide, t.athleteId, t.player);
+    let playerAbbr = preferSide === 'home' ? homeAbbr : awayAbbr;
+    if (!rosterPlayer) {
+      const other = preferSide === 'home' ? 'away' : 'home';
+      const rp2 = findRosterPlayer(lineups, other, t.athleteId, t.player);
+      if (rp2) { rosterPlayer = rp2; playerAbbr = other === 'home' ? homeAbbr : awayAbbr; }
+    }
     const badge = playerBadge(rosterPlayer, playerAbbr, t.player);
     const glyph = TIMELINE_GLYPH[t.kind] || '';
     const tag = TIMELINE_TAG[t.kind] || '';
@@ -2738,13 +2772,11 @@ function renderTimeline(e, timeline, lineups) {
     const isGoal = /goal$/.test(t.kind);
     const rowCls = `tl-row ${side} ${isGoal ? 'goal' : ''}${t.kind === 'sub' ? ' sub' : ''}`;
     const nameInner = `<span class="tl-nm">${escapeHtml(t.player)}</span>`;
-    // Glyph (goal ball / card) and the PEN/OG tag sit together beside the
-    // minute pill — OUTSIDE the text column — so the name gets the column's
-    // full width AND the penalty marker stays neatly aligned with the goal.
-    const glyphHtml = `<span class="tl-glyph">${glyph}</span>`;
-    const marks = side === 'home'
-      ? `<span class="tl-marks">${glyphHtml}${tag}</span>`
-      : `<span class="tl-marks">${tag}${glyphHtml}</span>`;
+    // Only the small glyph (ball / card) sits next to the minute pill. The
+    // PEN / OG / PEN-MISS tag goes on its OWN line under the name so a wide
+    // tag never squeezes the name into a one-letter-per-line column.
+    const glyphHtml = `<span class="tl-marks"><span class="tl-glyph">${glyph}</span></span>`;
+    const tagLine = tag ? `<div class="tl-tagline">${tag}</div>` : '';
     if (side === 'home') {
       return `
         <li class="${rowCls}">
@@ -2752,9 +2784,10 @@ function renderTimeline(e, timeline, lineups) {
             ${badge}
             <div class="tl-text">
               <div class="tl-name">${nameInner}</div>
+              ${tagLine}
               ${assistHtml}
             </div>
-            ${marks}
+            ${glyphHtml}
             <span class="tl-dots" aria-hidden="true"></span>
             <span class="tl-minute">${minute}</span>
           </div>
@@ -2765,9 +2798,10 @@ function renderTimeline(e, timeline, lineups) {
         <div class="tl-half">
           <span class="tl-minute">${minute}</span>
           <span class="tl-dots" aria-hidden="true"></span>
-          ${marks}
+          ${glyphHtml}
           <div class="tl-text">
             <div class="tl-name">${nameInner}</div>
+            ${tagLine}
             ${assistHtml}
           </div>
           ${badge}

@@ -1,4 +1,4 @@
-const CACHE = 'wc2026-v42';
+const CACHE = 'wc2026-v43';
 const SHELL = [
   './',
   './index.html',
@@ -31,7 +31,6 @@ self.addEventListener('push', (e) => {
   const title = data.title || 'World Cup 2026';
   const body = data.body || '';
   const tag = data.type && data.eventId ? `${data.type}:${data.eventId}` : undefined;
-  const url = data.url || '/';
   e.waitUntil(
     self.registration.showNotification(title, {
       body,
@@ -39,24 +38,30 @@ self.addEventListener('push', (e) => {
       renotify: !!tag,
       icon: 'icons/icon-192.png',
       badge: 'icons/icon-192.png',
-      data: { url },
+      data: { eventId: data.eventId || null },
     })
   );
 });
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/';
+  // Open the APP (registration scope), not the origin root — the app may live
+  // at a sub-path (e.g. /world-cup-2026/). Deep-link to the match if we have
+  // its id so the right game opens.
+  const base = self.registration.scope;
+  const eventId = e.notification.data && e.notification.data.eventId;
+  const target = eventId ? `${base}?match=${encodeURIComponent(eventId)}` : base;
   e.waitUntil(
     (async () => {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for (const client of all) {
-        if ('focus' in client) {
-          client.navigate(url);
-          return client.focus();
+        if (client.url && client.url.startsWith(base) && 'focus' in client) {
+          await client.focus();
+          if ('navigate' in client) { try { await client.navigate(target); } catch {} }
+          return;
         }
       }
-      if (self.clients.openWindow) await self.clients.openWindow(url);
+      if (self.clients.openWindow) await self.clients.openWindow(target);
     })()
   );
 });
