@@ -91,6 +91,19 @@
       <h2 id="predictions-title">🎯 Your predictions</h2>
       <div id="predictions-summary" class="pred-summary"></div>
       <div id="predictions-list" class="predictions-list"></div>
+      <div class="pred-backup">
+        <span class="pred-backup-head">Keep your predictions safe</span>
+        <div class="pred-backup-row">
+          <button type="button" id="pred-export" class="ghost-btn">⬇︎ Back up</button>
+          <button type="button" id="pred-import" class="ghost-btn">⬆︎ Restore</button>
+        </div>
+        <p class="pred-backup-hint" id="pred-backup-status">Save a backup file so your predictions survive a reinstall or a browser storage cleanup.</p>
+        <textarea id="pred-backup-code" class="pred-backup-code" spellcheck="false" autocomplete="off" hidden></textarea>
+        <div class="pred-backup-apply" hidden>
+          <button type="button" id="pred-apply-code" class="primary-btn">Apply pasted backup</button>
+        </div>
+        <input type="file" id="pred-import-file" accept="application/json,.json,text/plain" hidden />
+      </div>
     </div>
   </dialog>
 

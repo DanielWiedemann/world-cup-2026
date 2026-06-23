@@ -2478,6 +2478,7 @@ function renderPredictionsList() {
 predictionsChip?.addEventListener('click', () => {
   resolvePredictionStats();
   renderPredictionsList();
+  resetBackupUI();
   if (typeof predictionsDialog.showModal === 'function') predictionsDialog.showModal();
 });
 $('#predictions-close')?.addEventListener('click', () => predictionsDialog.close());
@@ -2486,6 +2487,206 @@ $('#predictions-close')?.addEventListener('click', () => predictionsDialog.close
 // is the backdrop.
 predictionsDialog?.addEventListener('click', (e) => {
   if (e.target === predictionsDialog) predictionsDialog.close();
+});
+
+// --- Predictions backup / restore ------------------------------------------
+// Predictions live in localStorage, which mobile browsers can wipe out from
+// under us: iOS Safari (and Home-Screen apps) evict all script-writable
+// storage after ~7 idle days, and Chrome evicts under disk pressure unless
+// the origin has been granted *persistent* storage. Two defences:
+//   1) ask the browser for persistent storage so it stops evicting us, and
+//   2) let the user save a backup file — it lives in Downloads, outside the
+//      storage the browser clears, so it survives an eviction OR a reinstall.
+
+async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage || !navigator.storage.persist) return;
+    const already = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+    if (!already) await navigator.storage.persist();
+  } catch {}
+}
+
+function backupPayload() {
+  return JSON.stringify(
+    {
+      app: 'world-cup-2026',
+      kind: 'predictions-backup',
+      version: 1,
+      savedAt: new Date().toISOString(),
+      predictions,
+    },
+    null,
+    2
+  );
+}
+
+function backupFilename() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `world-cup-predictions-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.json`;
+}
+
+function downloadText(filename, text) {
+  try {
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      a.remove();
+    }, 1500);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const backupStatus = $('#pred-backup-status');
+const backupCode = $('#pred-backup-code');
+const backupApply = document.querySelector('.pred-backup-apply');
+const importFileInput = $('#pred-import-file');
+
+const BACKUP_HINT_DEFAULT =
+  'Save a backup file so your predictions survive a reinstall or a browser storage cleanup.';
+
+function setBackupStatus(msg) {
+  if (backupStatus) backupStatus.textContent = msg;
+}
+
+// Reset the backup/restore controls to their resting state — called each time
+// the popup opens so a stale error or a previous backup code never lingers.
+function resetBackupUI() {
+  if (backupCode) {
+    backupCode.hidden = true;
+    backupCode.value = '';
+    backupCode.readOnly = true;
+  }
+  if (backupApply) backupApply.hidden = true;
+  setBackupStatus(BACKUP_HINT_DEFAULT);
+}
+
+function exportPredictions() {
+  const count = Object.keys(predictions).length;
+  if (!count) {
+    setBackupStatus('No predictions to back up yet — make one first.');
+    return;
+  }
+  const text = backupPayload();
+  const downloaded = downloadText(backupFilename(), text);
+  // Always surface the code too: on iOS standalone the file download can be
+  // blocked, so a copy-pasteable code is a guaranteed fallback.
+  if (backupCode) {
+    backupCode.value = text;
+    backupCode.readOnly = true;
+    backupCode.hidden = false;
+  }
+  if (backupApply) backupApply.hidden = true;
+  let copied = false;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => {},
+      () => {}
+    );
+    copied = true;
+  }
+  setBackupStatus(
+    `${count} prediction${count === 1 ? '' : 's'} backed up.` +
+      (downloaded ? ' Saved to your downloads.' : '') +
+      (copied
+        ? ' Also copied — paste it somewhere safe (Notes, email).'
+        : ' Long-press the text below to copy it somewhere safe.')
+  );
+}
+
+// Accept either the wrapped backup ({ predictions: {...} }) or a bare
+// { eventId: {h,a} } map. Returns a cleaned, validated map or null.
+function parseBackup(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const map =
+    data && data.predictions && typeof data.predictions === 'object'
+      ? data.predictions
+      : data && typeof data === 'object'
+      ? data
+      : null;
+  if (!map) return null;
+  const clean = {};
+  for (const [id, p] of Object.entries(map)) {
+    if (p && Number.isFinite(p.h) && Number.isFinite(p.a)) {
+      clean[id] = {
+        h: p.h,
+        a: p.a,
+        ...(p.motm ? { motm: p.motm } : {}),
+        locked: true,
+      };
+    }
+  }
+  return Object.keys(clean).length ? clean : null;
+}
+
+function applyRestore(text) {
+  const restored = parseBackup(text);
+  if (!restored) {
+    setBackupStatus('That doesn’t look like a valid backup. Pick the .json file you saved.');
+    return;
+  }
+  const before = Object.keys(predictions).length;
+  // Restored entries win; any newer local predictions not in the backup are
+  // kept, so restoring an older backup never destroys a more recent pick.
+  predictions = { ...predictions, ...restored };
+  savePredictions();
+  const added = Object.keys(predictions).length - before;
+  resolvePredictionStats();
+  renderPredictionsList();
+  render();
+  updatePredictionsChip();
+  if (backupCode) {
+    backupCode.hidden = true;
+    backupCode.value = '';
+  }
+  if (backupApply) backupApply.hidden = true;
+  const n = Object.keys(restored).length;
+  setBackupStatus(
+    `Restored ${n} prediction${n === 1 ? '' : 's'}${added > 0 ? ` (${added} new)` : ''}.`
+  );
+}
+
+$('#pred-export')?.addEventListener('click', exportPredictions);
+$('#pred-import')?.addEventListener('click', () => {
+  // Reveal an editable paste box AND open the file picker — whichever the
+  // user has handy works.
+  if (backupCode) {
+    backupCode.value = '';
+    backupCode.readOnly = false;
+    backupCode.hidden = false;
+    backupCode.placeholder = 'Paste your backup code here, or choose the .json file…';
+  }
+  if (backupApply) backupApply.hidden = false;
+  setBackupStatus('Choose your backup file, or paste your backup code below.');
+  importFileInput?.click();
+});
+$('#pred-apply-code')?.addEventListener('click', () => {
+  if (backupCode && backupCode.value.trim()) applyRestore(backupCode.value);
+  else setBackupStatus('Paste your backup code first, or choose the .json file.');
+});
+importFileInput?.addEventListener('change', async () => {
+  const file = importFileInput.files && importFileInput.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    applyRestore(text);
+  } catch {
+    setBackupStatus('Couldn’t read that file. Try pasting the backup code instead.');
+  }
+  importFileInput.value = '';
 });
 
 // --- Team sheet -------------------------------------------------------------
@@ -3628,6 +3829,7 @@ function render() {
 })();
 
 ensurePhotoDb();
+requestPersistentStorage();
 load();
 ensureStandings();
 syncLiveTab();
