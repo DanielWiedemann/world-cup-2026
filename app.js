@@ -82,6 +82,7 @@ let state = {
   scorers: null,
   scorersError: false,
   animateNext: true,
+  liveSelected: null, // which simultaneous live/imminent game the LIVE tab shows
 };
 let pollTimer = null;
 let nextBannerTimer = null;
@@ -298,8 +299,10 @@ refreshBtn.addEventListener('click', () => {
 
 // Tapping the Next Match banner expands that match's card (same as tapping it
 // in the list), then scrolls to it.
-nextBannerEl.addEventListener('click', () => {
-  const id = nextBannerEl.dataset.eventId;
+nextBannerEl.addEventListener('click', (e) => {
+  // A specific matchup row wins; otherwise fall back to the single-game id.
+  const row = e.target.closest('.next-match');
+  const id = (row && row.dataset.eventId) || nextBannerEl.dataset.eventId;
   if (!id) return;
   state.expanded.add(id);
   render();
@@ -570,6 +573,16 @@ window.addEventListener('focus', () => pollScores({ throttleMs: 15000 }));
 window.addEventListener('online', () => pollScores({ throttleMs: 15000 }));
 
 matchesEl.addEventListener('click', (e) => {
+  // Live-match switcher chip (when several games run at once).
+  const liveChip = e.target.closest('.live-switch-chip');
+  if (liveChip) {
+    e.stopPropagation();
+    if (liveChip.dataset.liveSelect !== state.liveSelected) {
+      state.liveSelected = liveChip.dataset.liveSelect;
+      render();
+    }
+    return;
+  }
   // Share button.
   const shareBtn = e.target.closest('.share-btn');
   if (shareBtn) {
@@ -3432,40 +3445,56 @@ function updateNextBanner() {
     return;
   }
   const now = Date.now();
-  const next = state.events.find(
-    (e) => e.state === 'pre' && new Date(e.date).getTime() > now
-  );
-  if (!next) {
+  // All upcoming pre-game matches, earliest kickoff first.
+  const upcoming = state.events
+    .filter((e) => e.state === 'pre' && new Date(e.date).getTime() > now)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  if (!upcoming.length) {
     nextBannerEl.hidden = true;
     return;
   }
-  const ms = new Date(next.date).getTime() - now;
-  if (ms > 48 * 60 * 60 * 1000) {
+  const t0 = new Date(upcoming[0].date).getTime();
+  if (t0 - now > 48 * 60 * 60 * 1000) {
     nextBannerEl.hidden = true;
     return;
   }
+  // Every match that shares the earliest kickoff instant — e.g. two group
+  // games both at 9pm — sits under one shared countdown.
+  const slot = upcoming.filter((e) => new Date(e.date).getTime() === t0);
+  const ms = t0 - now;
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
   const s = Math.floor((ms % 60000) / 1000);
-  const kickoff = new Date(next.date);
+  const kickoff = new Date(t0);
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
   const isToday = sameLocalDay(kickoff, today);
   const isTomorrow = sameLocalDay(kickoff, tomorrow);
+  const timeStr = formatTime(slot[0].date);
+  // "Tonight" only reads right for an evening kickoff; daytime games say "Today".
+  const todayWord = kickoff.getHours() >= 17 ? 'Tonight' : 'Today';
   const when = isToday
-    ? `Tonight · ${formatTime(next.date)}`
+    ? `${todayWord} · ${timeStr}`
     : isTomorrow
-    ? `Tomorrow · ${formatTime(next.date)}`
-    : `${kickoff.toLocaleDateString([], { weekday: 'short' })} · ${formatTime(next.date)}`;
-  const homeName = next.home?.short || next.home?.name || 'TBD';
-  const awayName = next.away?.short || next.away?.name || 'TBD';
-  const homeLogo = next.home?.logo
-    ? `<img class="next-flag" src="${escapeHtml(next.home.logo)}" alt="" loading="lazy" />`
-    : '';
-  const awayLogo = next.away?.logo
-    ? `<img class="next-flag" src="${escapeHtml(next.away.logo)}" alt="" loading="lazy" />`
-    : '';
+    ? `Tomorrow · ${timeStr}`
+    : `${kickoff.toLocaleDateString([], { weekday: 'short' })} · ${timeStr}`;
+  const matchupHtml = (e) => {
+    const homeName = e.home?.short || e.home?.name || 'TBD';
+    const awayName = e.away?.short || e.away?.name || 'TBD';
+    const homeLogo = e.home?.logo
+      ? `<img class="next-flag" src="${escapeHtml(e.home.logo)}" alt="" loading="lazy" />`
+      : '';
+    const awayLogo = e.away?.logo
+      ? `<img class="next-flag" src="${escapeHtml(e.away.logo)}" alt="" loading="lazy" />`
+      : '';
+    return `
+      <div class="next-match" data-event-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+        <div class="next-team">${homeLogo}<span class="next-team-name">${escapeHtml(homeName)}</span></div>
+        <span class="next-vs">vs</span>
+        <div class="next-team">${awayLogo}<span class="next-team-name">${escapeHtml(awayName)}</span></div>
+      </div>`;
+  };
   const hh = String(h).padStart(2, '0');
   const mm = String(m).padStart(2, '0');
   const ss = String(s).padStart(2, '0');
@@ -3479,23 +3508,21 @@ function updateNextBanner() {
     ? `${block(hh, 'Hrs')}<span class="next-sep">:</span>${block(mm, 'Min')}<span class="next-sep">:</span>${block(ss, 'Sec')}`
     : `${block(mm, 'Min')}<span class="next-sep">:</span>${block(ss, 'Sec')}`;
   // Re-rendering the whole innerHTML every second would kill any digit
-  // transitions. So: build the static frame once per match change, then
+  // transitions. So: build the static frame once per slot change, then
   // only patch the .next-num values on subsequent ticks.
-  const sig = `${next.id}|${showHours}`;
-  nextBannerEl.dataset.eventId = next.id; // for click-to-open
+  const sig = `${slot.map((e) => e.id).join(',')}|${showHours}`;
+  // Single-game click fallback; multi-game rows carry their own id.
+  nextBannerEl.dataset.eventId = slot.length === 1 ? slot[0].id : '';
   if (nextBannerEl.dataset.sig !== sig) {
     nextBannerEl.hidden = false;
     nextBannerEl.dataset.sig = sig;
+    nextBannerEl.classList.toggle('multi', slot.length > 1);
     nextBannerEl.innerHTML = `
       <div class="next-meta">
-        <span class="next-label">Next match</span>
+        <span class="next-label">${slot.length > 1 ? 'Next matches' : 'Next match'}</span>
         <span class="next-when">${escapeHtml(when)}</span>
       </div>
-      <div class="next-teams">
-        <div class="next-team">${homeLogo}<span class="next-team-name">${escapeHtml(homeName)}</span></div>
-        <span class="next-vs">vs</span>
-        <div class="next-team">${awayLogo}<span class="next-team-name">${escapeHtml(awayName)}</span></div>
-      </div>
+      <div class="next-matches">${slot.map(matchupHtml).join('')}</div>
       <div class="next-countdown-row">${countdownHtml}</div>
     `;
   } else {
@@ -3619,17 +3646,48 @@ function liveHTML() {
   if (!evs.length) {
     return `<p class="empty">No live match right now. The LIVE tab opens around kickoff time.</p>`;
   }
-  return (
-    `<section class="day live-only">` +
-    evs
-      .map((e) =>
-        e.state === 'in'
-          ? matchCard(e, { hero: true, forceExpand: true })
-          : preKickoffCard(e)
-      )
-      .join('') +
-    `</section>`
-  );
+  // With several games at once, show a switcher and one game at a time so each
+  // gets the full hero treatment instead of an endless stacked scroll.
+  let sel = state.liveSelected ? evs.find((e) => e.id === state.liveSelected) : null;
+  if (!sel) {
+    sel = evs[0];
+    state.liveSelected = sel.id; // heal a stale/empty selection (e.g. a game ended)
+  }
+  const switcher = evs.length > 1 ? liveSwitcherHTML(evs, sel.id) : '';
+  const card =
+    sel.state === 'in'
+      ? matchCard(sel, { hero: true, forceExpand: true })
+      : preKickoffCard(sel);
+  return `<section class="day live-only">${switcher}${card}</section>`;
+}
+
+// A segmented switcher across simultaneous live/imminent games. Each chip
+// identifies its match (flags + abbreviations) and shows the live score or a
+// "soon" hint, with a pulsing dot for games already in progress.
+function liveSwitcherHTML(evs, selId) {
+  const flag = (tm) =>
+    tm?.logo
+      ? `<img class="lsw-flag" src="${escapeHtml(tm.logo)}" alt="" loading="lazy" />`
+      : '<span class="lsw-flag placeholder"></span>';
+  const chips = evs
+    .map((e) => {
+      const live = e.state === 'in';
+      const ha = e.home?.abbr || e.home?.short || '—';
+      const aa = e.away?.abbr || e.away?.short || '—';
+      const mid = live
+        ? `<span class="lsw-score">${escapeHtml(String(e.home?.score ?? 0))}–${escapeHtml(String(e.away?.score ?? 0))}</span>`
+        : `<span class="lsw-vs">v</span>`;
+      const status = live
+        ? `<span class="lsw-min">${escapeHtml(e.detail || 'LIVE')}</span>`
+        : `<span class="lsw-min soon">soon</span>`;
+      return `
+        <button type="button" class="live-switch-chip${e.id === selId ? ' active' : ''}${live ? ' is-live' : ''}" data-live-select="${escapeHtml(e.id)}" role="tab" aria-selected="${e.id === selId}">
+          <span class="lsw-teams">${live ? '<span class="lsw-dot"></span>' : ''}${flag(e.home)}<span class="lsw-abbr">${escapeHtml(ha)}</span>${mid}<span class="lsw-abbr">${escapeHtml(aa)}</span>${flag(e.away)}</span>
+          ${status}
+        </button>`;
+    })
+    .join('');
+  return `<div class="live-switch" role="tablist" aria-label="Live matches">${chips}</div>`;
 }
 
 // Shown in the LIVE tab for a match that's imminent but hasn't kicked off.

@@ -252,6 +252,69 @@ body.live-mode .app-header {
 }
 .live-only { margin-top: 4px; }
 
+/* Switcher across simultaneous live/imminent games (LIVE tab). Each chip
+   identifies a match and shows its score or a "soon" hint; tap to focus it. */
+.live-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.live-switch-chip {
+  flex: 1 1 auto;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.22);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.live-switch-chip.active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.55);
+}
+.live-switch-chip:active { transform: scale(0.98); }
+.lsw-teams {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+.lsw-flag { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+.lsw-flag.placeholder { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
+.lsw-score { font-variant-numeric: tabular-nums; font-weight: 800; }
+.lsw-vs { opacity: 0.5; font-size: 11px; font-weight: 700; }
+.lsw-min {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+.lsw-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff5a5a;
+  box-shadow: 0 0 0 0 rgba(255, 90, 90, 0.6);
+  animation: lsw-pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes lsw-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 90, 90, 0.6); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 90, 90, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .lsw-dot { animation: none; } }
+
 /* Pre-kickoff card shown in the LIVE tab in the minutes before a match (and
    while waiting on a delayed start). */
 .live-kickoff {
@@ -422,6 +485,26 @@ body.live-mode .app-header {
   opacity: 0.45;
   flex-shrink: 0;
 }
+
+/* One or more matchups sharing the same kickoff sit here, above the shared
+   countdown. A single game looks as before; multiple stack with dividers. */
+.next-matches { margin-bottom: 18px; }
+.next-match {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.next-banner.multi .next-match {
+  padding: 11px 8px;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.next-banner.multi .next-match:not(:first-child) {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.next-banner.multi .next-match:active { background: rgba(255, 255, 255, 0.06); }
+.next-banner.multi .next-team-name { font-size: 14px; }
+.next-banner.multi .next-team .next-flag { width: 26px; height: 26px; }
 
 /* Pro broadcast-style stacked countdown. */
 .next-countdown-row {
