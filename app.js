@@ -1255,30 +1255,34 @@ async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
     saveCache(state.events);
     setUpdated(Date.now());
     syncLiveTab();
-    // Keep live match timelines fresh (drives the live Golden Boot) and, when
-    // a match has just ended, refresh the season scorers so its goals settle
-    // into the official leaderboard.
-    let justFinished = false;
-    for (const e of state.events) {
-      if (e.state === 'in') ensureStats(e.id);
-      else if (e.state === 'post' && prevStates.get(e.id) === 'in') justFinished = true;
-    }
+    // Which live matches just had their score tick up this poll.
+    const scored = state.events.filter(
+      (e) =>
+        e.state === 'in' &&
+        prevTotals.get(e.id) != null &&
+        totalGoals(e) > prevTotals.get(e.id)
+    );
+    const justFinished = state.events.some(
+      (e) => e.state === 'post' && prevStates.get(e.id) === 'in'
+    );
+    // A finished match settles into the official season leaderboard.
     if (justFinished) ensureScorers(true);
+    // Refresh every live match's timeline (drives the live Golden Boot). Use a
+    // SINGLE call per match — forced for the ones that just scored — so the
+    // forced refetch isn't pre-empted by a non-forced call that already set the
+    // in-flight `loading` guard (which used to swallow the "who scored" fetch).
+    for (const e of state.events) {
+      if (e.state === 'in') ensureStats(e.id, { force: scored.includes(e) });
+    }
+    // ESPN's keyEvents (who scored) lags the scoreboard, so the forced refetch
+    // above often still lacks the scorer. Chase it: keep refetching the match
+    // until its timeline accounts for the new score (drives the Scorers tab).
+    for (const e of scored) scheduleScorerReconcile(e.id);
     render();
     resolvePredictionStats(); // pull timelines so final points + MOTM resolve
     if (predictionsDialog?.open) renderPredictionsList();
-    // GOAL! A live match's total just went up — force-refresh its detail so
-    // "who scored" appears immediately (not on the next stats window), and
-    // celebrate once.
-    let celebrated = false;
-    for (const e of state.events) {
-      if (e.state !== 'in') continue;
-      const prev = prevTotals.get(e.id);
-      if (prev != null && totalGoals(e) > prev) {
-        ensureStats(e.id, { force: true });
-        if (celebrate && !celebrated) { celebrateGoal(e.id); celebrated = true; }
-      }
-    }
+    // Celebrate once per poll if anything was scored.
+    if (celebrate && scored.length) celebrateGoal(scored[0].id);
   } catch (err) {
     console.error('Score poll failed', err);
   } finally {
@@ -1286,8 +1290,45 @@ async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
   }
 }
 
-// The 30s interval poller while a match is active.
+// The live interval poller while a match is active.
 const livePoll = () => pollScores({ celebrate: true });
+
+// Goal-ish timeline entries (the ones that move the scoreline) for a match.
+function timelineGoalCount(entry, ev) {
+  if (!entry || !entry.timeline) return 0;
+  return entry.timeline.filter(
+    (t) => t.kind === 'goal' || t.kind === 'penalty-goal' || t.kind === 'own-goal'
+  ).length;
+}
+
+// ESPN updates the scoreboard score before its match summary lists who scored.
+// After a goal we briefly chase that match's summary (every few seconds, a few
+// times) until the timeline's goal count catches up to the scoreboard — so the
+// Scorers tab and the match timeline reflect the goal within seconds, not on
+// the next 15s poll. One chaser per match; it self-stops when caught up, the
+// match ends, or it runs out of attempts. The poll already forced one refetch
+// at t=0, so this only handles the follow-ups.
+const reconcileTimers = new Map();
+function scheduleScorerReconcile(eventId) {
+  if (reconcileTimers.has(eventId)) return;
+  let tries = 0;
+  const stop = () => {
+    const t = reconcileTimers.get(eventId);
+    if (t) clearInterval(t);
+    reconcileTimers.delete(eventId);
+  };
+  const tick = async () => {
+    tries += 1;
+    const ev = state.events.find((e) => e.id === eventId);
+    // Stop chasing if the match ended, vanished, or the app went to the
+    // background — the regular poll (and the on-return catch-up poll) take over.
+    if (!ev || ev.state !== 'in' || document.hidden) return stop();
+    await ensureStats(eventId, { force: true });
+    const caughtUp = timelineGoalCount(state.stats[eventId], ev) >= totalGoals(ev);
+    if (caughtUp || tries >= 6) stop();
+  };
+  reconcileTimers.set(eventId, setInterval(tick, 6000));
+}
 
 // --- Goal celebration ------------------------------------------------------
 
