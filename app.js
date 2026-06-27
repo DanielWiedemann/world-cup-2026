@@ -1775,10 +1775,19 @@ async function shareMatch(id) {
 }
 
 // --- Golden Boot (top scorers) ----------------------------------------------
+//
+// ESPN's pre-aggregated `statistics` leaders feed is unreliable mid-tournament:
+// it lags days behind AND silently omits players (e.g. a hat-trick hero just
+// missing from the list). So we compute the Golden Boot ourselves from the
+// authoritative per-match data — each day's scoreboard carries a `details`
+// array of scoring plays (scorer, team, penalty/own-goal flags) — aggregating
+// goals across every finished match. Assists aren't in that feed, so the
+// (secondary) assists list still comes from ESPN's aggregate.
 
 const SCORERS_URL =
   'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/statistics?season=2026';
-const SCORERS_CACHE_KEY = 'wc2026.scorers.v1';
+const SCORERS_CACHE_KEY = 'wc2026.scorers.v2'; // v2: goals computed locally
+const GBDATES_CACHE_KEY = 'wc2026.gbdates.v1'; // per-day goal cache
 const SCORERS_TTL_MS = 5 * 60 * 1000;
 let scorersLoading = false;
 
@@ -1791,6 +1800,69 @@ function loadScorersCache() {
   } catch {
     return null;
   }
+}
+
+// Per-day goal cache. A day whose games are all finished never changes, so we
+// keep those permanently (across sessions); days with a live/upcoming game are
+// refetched. Keyed by YYYYMMDD.
+const goldenBootDateCache = new Map();
+(function loadGBDateCache() {
+  try {
+    const obj = JSON.parse(localStorage.getItem(GBDATES_CACHE_KEY) || '{}');
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && v.allFinal && Array.isArray(v.goals)) goldenBootDateCache.set(k, v);
+    }
+  } catch {}
+})();
+function saveGBDateCache() {
+  try {
+    const obj = {};
+    for (const [k, v] of goldenBootDateCache) if (v.allFinal) obj[k] = v;
+    localStorage.setItem(GBDATES_CACHE_KEY, JSON.stringify(obj));
+  } catch {}
+}
+
+// Goals from one day's scoreboard `details`. Only finished games count toward
+// the tally (live games are layered on via liveGoalTally); `allFinal` flags
+// whether the day is safe to cache permanently.
+async function fetchDateGoals(dateStr) {
+  const res = await fetch(`${ESPN_BASE}?dates=${dateStr}&limit=100`);
+  if (!res.ok) throw new Error('scoreboard ' + res.status);
+  const data = await res.json();
+  const goals = [];
+  let allFinal = true;
+  for (const ev of data.events || []) {
+    const comp = ev.competitions && ev.competitions[0];
+    if (!comp) continue;
+    if ((ev.status?.type?.state) !== 'post') {
+      allFinal = false; // a live/upcoming game here — don't cache this day yet
+      continue;
+    }
+    const teamById = {};
+    for (const c of comp.competitors || []) {
+      teamById[c.team?.id] = {
+        abbr: c.team?.abbreviation || '',
+        name: c.team?.shortDisplayName || c.team?.displayName || '',
+        logo: c.team?.logos?.[0]?.href || c.team?.logo || '',
+      };
+    }
+    for (const dt of comp.details || []) {
+      if (!dt.scoringPlay || dt.ownGoal) continue; // goals only; own goals excluded
+      const a = (dt.athletesInvolved || [])[0];
+      if (!a) continue;
+      const tm = teamById[dt.team?.id] || {};
+      goals.push({
+        athleteId: a.id || '',
+        name: a.displayName || a.shortName || '?',
+        jersey: a.jersey || '',
+        teamAbbr: tm.abbr || '',
+        teamName: tm.name || '',
+        teamLogo: tm.logo || '',
+        pen: !!dt.penaltyKick,
+      });
+    }
+  }
+  return { goals, allFinal };
 }
 
 function parseLeaders(category) {
@@ -1818,24 +1890,69 @@ function parseLeaders(category) {
 async function ensureScorers(force = false) {
   const cached = state.scorers;
   if (!force && cached && Date.now() - cached.fetchedAt < SCORERS_TTL_MS) return;
-  // While a match is live, don't refresh the season feed (only the FT-forced
-  // refresh does): mergedGoals() adds live goals on top of this snapshot, so a
-  // mid-match season update could double-count. The snapshot stays put until
-  // full time, where pollScores() forces a clean refresh.
+  // While a match is live, keep the finished-games snapshot stable — mergedGoals()
+  // overlays live goals on top, so a mid-match recompute could briefly double up.
+  // Full time forces a clean recompute via pollScores().
   if (!force && cached && state.events.some((e) => e.state === 'in')) return;
   if (scorersLoading) return;
   scorersLoading = true;
   try {
-    const res = await fetch(SCORERS_URL);
-    if (!res.ok) throw new Error('scorers ' + res.status);
-    const data = await res.json();
-    const goalsCat = (data.stats || []).find((s) => s.name === 'goalsLeaders');
-    const assistsCat = (data.stats || []).find((s) => s.name === 'assistsLeaders');
-    state.scorers = {
-      goals: parseLeaders(goalsCat),
-      assists: parseLeaders(assistsCat),
-      fetchedAt: Date.now(),
-    };
+    // Every day that has a finished match (reuse the permanent cache for days
+    // whose games are all done; only today / live days actually refetch).
+    const days = [
+      ...new Set(
+        state.events
+          .filter((e) => e.state === 'post')
+          .map((e) => ymd(new Date(e.date)))
+      ),
+    ];
+    const perDay = await Promise.all(
+      days.map(async (d) => {
+        const c = goldenBootDateCache.get(d);
+        if (c && c.allFinal) return c;
+        try {
+          const fresh = await fetchDateGoals(d);
+          goldenBootDateCache.set(d, fresh);
+          return fresh;
+        } catch {
+          return c || { goals: [], allFinal: false };
+        }
+      })
+    );
+    saveGBDateCache();
+    // Aggregate goals per player.
+    const tally = new Map();
+    for (const day of perDay) {
+      for (const g of day.goals) {
+        const key = g.athleteId || `${lastNameKey(g.name)}|${g.teamAbbr}`;
+        const cur =
+          tally.get(key) ||
+          {
+            name: g.name, shortName: g.name, jersey: g.jersey,
+            teamAbbr: g.teamAbbr, teamName: g.teamName, teamLogo: g.teamLogo,
+            value: 0, goals: 0, pens: 0, assists: 0,
+          };
+        cur.value += 1;
+        cur.goals += 1;
+        if (g.pen) cur.pens += 1;
+        if (g.jersey) cur.jersey = g.jersey;
+        tally.set(key, cur);
+      }
+    }
+    const goals = [...tally.values()].sort(
+      (a, b) =>
+        b.value - a.value ||
+        b.goals - a.goals ||
+        (a.name || '').localeCompare(b.name || '')
+    );
+    // Assists: ESPN's aggregate (the scoreboard feed carries no assist data).
+    let assists = (cached && cached.assists) || [];
+    try {
+      const sdata = await (await fetch(SCORERS_URL)).json();
+      const assistsCat = (sdata.stats || []).find((s) => s.name === 'assistsLeaders');
+      if (assistsCat) assists = parseLeaders(assistsCat);
+    } catch {}
+    state.scorers = { goals, assists, fetchedAt: Date.now() };
     try {
       localStorage.setItem(SCORERS_CACHE_KEY, JSON.stringify(state.scorers));
     } catch {}
@@ -1858,9 +1975,18 @@ function scorerRow(p, i, statLabel) {
     : `<span class="sc-photo placeholder">${escapeHtml(p.jersey || '?')}</span>`;
   const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
   const liveTag = p.live ? '<span class="sc-live"><span class="sc-live-dot"></span>LIVE</span>' : '';
-  const extra = p.live && !p.apps
-    ? 'scoring now'
-    : `${p.apps} app${p.apps === 1 ? '' : 's'}${statLabel === 'goals' && p.assists ? ` · ${p.assists} ast` : ''}`;
+  // Goals come from our own tally (no "appearances" field); surface penalties
+  // instead. Assists still come from ESPN's aggregate, which has appearances.
+  const extra =
+    statLabel === 'goals'
+      ? p.pens
+        ? `${p.pens} pen${p.pens === 1 ? '' : 's'}`
+        : p.live
+        ? 'scoring now'
+        : ''
+      : p.apps
+      ? `${p.apps} app${p.apps === 1 ? '' : 's'}`
+      : '';
   return `
     <div class="sc-row ${i === 0 ? 'leader' : ''}${p.live ? ' live' : ''}">
       <span class="sc-rank">${medal}</span>
@@ -1900,8 +2026,10 @@ function liveGoalTally() {
         teamName: team?.short || team?.name || '',
         teamLogo: team?.logo || '',
         goals: 0,
+        pens: 0,
       };
       cur.goals += 1;
+      if (t.kind === 'penalty-goal') cur.pens += 1;
       if (rp?.jersey) cur.jersey = rp.jersey;
       tally.set(key, cur);
     }
@@ -1920,18 +2048,24 @@ function mergedGoals() {
     if (hit) {
       hit.value = (hit.value || 0) + lg.goals;
       hit.goals = (hit.goals || 0) + lg.goals;
+      hit.pens = (hit.pens || 0) + (lg.pens || 0);
       hit.live = true;
     } else {
       const np = {
         name: lg.name, shortName: lg.name, jersey: lg.jersey,
         teamAbbr: lg.teamAbbr, teamName: lg.teamName, teamLogo: lg.teamLogo,
-        value: lg.goals, apps: 0, assists: 0, live: true,
+        value: lg.goals, goals: lg.goals, pens: lg.pens || 0, assists: 0, live: true,
       };
       byKey.set(key, np);
       base.push(np);
     }
   }
-  base.sort((a, b) => b.value - a.value || (b.goals || 0) - (a.goals || 0));
+  base.sort(
+    (a, b) =>
+      b.value - a.value ||
+      (b.goals || 0) - (a.goals || 0) ||
+      (a.name || '').localeCompare(b.name || '')
+  );
   return base;
 }
 
