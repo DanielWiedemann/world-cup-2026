@@ -583,6 +583,27 @@ matchesEl.addEventListener('click', (e) => {
     }
     return;
   }
+  // Bracket round chip → jump to that round's section.
+  const koJump = e.target.closest('.ko-chip');
+  if (koJump) {
+    const sec = document.getElementById(`ko-${koJump.dataset.koJump}`);
+    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  // Bracket card with a real team → open that game in the schedule.
+  const koCardEl = e.target.closest('.ko-card.tappable[data-event-id]');
+  if (koCardEl) {
+    const id = koCardEl.dataset.eventId;
+    userNavigated = true;
+    state.expanded.add(id);
+    setFilter('all');
+    ensureStats(id);
+    requestAnimationFrame(() => {
+      const c = matchesEl.querySelector(`.match[data-event-id="${CSS.escape(id)}"]`);
+      if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return;
+  }
   // Share button.
   const shareBtn = e.target.closest('.share-btn');
   if (shareBtn) {
@@ -602,13 +623,6 @@ matchesEl.addEventListener('click', (e) => {
   if (saveBtn) {
     e.stopPropagation();
     onPredictionSave(saveBtn.dataset.ev);
-    return;
-  }
-  // Man-of-the-Match pick.
-  const motmBtn = e.target.closest('.motm-chip');
-  if (motmBtn) {
-    e.stopPropagation();
-    onMotmPick(motmBtn);
     return;
   }
   // Team tap → team sheet. Group tables always open it. On a match card it
@@ -693,6 +707,12 @@ playerDialog?.addEventListener('click', (e) => {
     e.clientY >= rect.top && e.clientY <= rect.bottom;
   if (!insideDialog) playerDialog.close();
 });
+// Superior Player of the Match dropdown (draft prediction).
+matchesEl.addEventListener('change', (e) => {
+  const motmSel = e.target.closest('.pred-motm-select');
+  if (motmSel) onMotmChange(motmSel);
+});
+
 // Keyboard accessibility — Enter/Space on a focused badge opens the dialog.
 matchesEl.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -2104,36 +2124,22 @@ function renderScorersView() {
 }
 
 // --- Knockout bracket --------------------------------------------------------
+//
+// ESPN's site scoreboard feed carries no reliable match number, and the old
+// approach (deriving bracket position from placeholder pairings like "2A|2B")
+// broke the instant real teams were drawn in — every knockout game then fell
+// out of the bracket. Instead we group fixtures by ROUND: from the placeholder
+// text while teams are still TBD, otherwise from the fixed 2026 schedule dates.
+// Each round is laid out as its own clear vertical section.
 
-// FIFA match numbers for the 2026 knockout phase. Verified against ESPN's
-// core API (competitions[0].matchNumber): R32 = 73-88, R16 = 89-96,
-// QF = 97-100, SF = 101-102, third place = 103, final = 104.
-// R32 fixtures are identified by their unique placeholder pairings.
-const R32_PAIR_TO_MATCH = {
-  '2A|2B': 73, '1E|3RD': 74, '1F|2C': 75, '1C|2F': 76,
-  '1I|3RD': 77, '2E|2I': 78, '1A|3RD': 79, '1L|3RD': 80,
-  '1D|3RD': 81, '1G|3RD': 82, '2K|2L': 83, '1H|2J': 84,
-  '1B|3RD': 85, '1J|2H': 86, '1K|3RD': 87, '2D|2G': 88,
-};
-// Display order per round — adjacent pairs feed the next round's match.
-const BRACKET_ORDER = {
-  r32: [74, 77, 73, 75, 83, 84, 81, 82, 76, 78, 79, 80, 86, 88, 85, 87],
-  r16: [89, 90, 93, 94, 91, 92, 95, 96],
-  qf: [97, 98, 99, 100],
-  sf: [101, 102],
-  final: [104],
-  third: [103],
-};
-const MATCHNUM_CACHE_KEY = 'wc2026.matchnums.v1';
-
-function loadMatchNums() {
-  try {
-    return JSON.parse(localStorage.getItem(MATCHNUM_CACHE_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-let matchNums = loadMatchNums();
+const KO_ROUNDS = [
+  { key: 'r32', title: 'Round of 32' },
+  { key: 'r16', title: 'Round of 16' },
+  { key: 'qf', title: 'Quarter-finals' },
+  { key: 'sf', title: 'Semi-finals' },
+  { key: 'third', title: 'Third place' },
+  { key: 'final', title: 'Final' },
+];
 
 function knockoutEvents() {
   return state.events.filter(
@@ -2141,109 +2147,109 @@ function knockoutEvents() {
   );
 }
 
-// Derive the FIFA match number for a knockout event from its placeholder
-// names while they still exist, persisting the result so it survives the
-// placeholders being replaced by real teams.
-function deriveMatchNumber(e) {
-  if (matchNums[e.id]) return matchNums[e.id];
-  let n = null;
-  const ha = e.home?.abbr || '';
-  const aa = e.away?.abbr || '';
-  const pairKey = (x, y) => [x, y].sort().join('|');
-  // R32: unique placeholder pairing.
-  if (R32_PAIR_TO_MATCH[pairKey(ha, aa)]) {
-    n = R32_PAIR_TO_MATCH[pairKey(ha, aa)];
-  } else {
-    // Later rounds: parse "Round of 32 N Winner" style names.
-    const txt = `${e.home?.name || ''}|${e.away?.name || ''}|${e.name || ''}`;
-    const r32 = txt.match(/Round of 32 (\d+) Winner/g);
-    const r16 = txt.match(/Round of 16 (\d+) Winner/g);
-    const qf = txt.match(/Quarterfinal (\d+) (Winner|Loser)/g);
-    const sf = txt.match(/Semifinal (\d+) (Winner|Loser)/g);
-    const firstNum = (arr, re) => parseInt(arr[0].match(re)[1], 10);
-    if (r32 && r32.length >= 1) {
-      // An R16 match — its number comes from the bracket chart.
-      const feeder = firstNum(r32, /Round of 32 (\d+) Winner/);
-      const map = { 2: 89, 5: 89, 1: 90, 3: 90, 11: 93, 12: 93, 9: 94, 10: 94, 4: 91, 6: 91, 7: 92, 8: 92, 14: 95, 16: 95, 13: 96, 15: 96 };
-      n = map[feeder] || null;
-    } else if (r16 && r16.length >= 1) {
-      const feeder = firstNum(r16, /Round of 16 (\d+) Winner/);
-      const map = { 1: 97, 2: 97, 5: 98, 6: 98, 3: 99, 4: 99, 7: 100, 8: 100 };
-      n = map[feeder] || null;
-    } else if (sf && /Loser/.test(txt)) {
-      n = 103;
-    } else if (sf) {
-      n = 104;
-    } else if (qf) {
-      const feeder = firstNum(qf, /Quarterfinal (\d+)/);
-      n = feeder <= 2 ? 101 : 102;
-    }
-  }
-  if (n) {
-    matchNums[e.id] = n;
-    try { localStorage.setItem(MATCHNUM_CACHE_KEY, JSON.stringify(matchNums)); } catch {}
-  }
-  return n;
+// Which round a knockout fixture belongs to. Placeholder names carry the round
+// explicitly while teams are TBD ("RD32" feeds the R16, "QFW" feeds the SF…);
+// once real teams are drawn we fall back to the fixed schedule date windows.
+function knockoutRound(e) {
+  const txt = `${e.home?.abbr || ''} ${e.away?.abbr || ''} ${e.home?.name || ''} ${e.away?.name || ''} ${e.name || ''}`;
+  if (/SF\s*W|Semifinal \d+ Winner/i.test(txt)) return 'final';
+  if (/SF\s*L|Semifinal \d+ Loser/i.test(txt)) return 'third';
+  if (/Q[F]?\s*W\s*\d|Quarterfinal \d+ Winner/i.test(txt)) return 'sf';
+  if (/RD\s*16|Round of 16/i.test(txt)) return 'qf';
+  if (/RD\s*32|Round of 32/i.test(txt)) return 'r16';
+  const t = new Date(e.date).getTime();
+  const D = (s) => new Date(s + 'T00:00:00Z').getTime();
+  if (t < D('2026-07-04')) return 'r32';
+  if (t < D('2026-07-08')) return 'r16';
+  if (t < D('2026-07-13')) return 'qf';
+  if (t < D('2026-07-17')) return 'sf';
+  if (t < D('2026-07-19')) return 'third';
+  return 'final';
 }
 
-function bracketTeamRow(t, opponent, e) {
+// A real qualified team (vs a "Winner of…" placeholder).
+function isRealTeam(t) {
+  return !!(t && /^[A-Z]{2,4}$/.test(t.abbr || ''));
+}
+
+// Tidy a placeholder name like "Round of 16 3 Winner" → "R16.3 winner".
+function prettyPlaceholder(t) {
+  let s = `${(t && (t.name || t.abbr)) || 'TBD'}`;
+  s = s
+    .replace(/Round of 32/i, 'R32')
+    .replace(/Round of 16/i, 'R16')
+    .replace(/Quarterfinal/i, 'QF')
+    .replace(/Semifinal/i, 'SF')
+    .replace(/\bRD\s*32\b/i, 'R32 winner')
+    .replace(/\bRD\s*16\b/i, 'R16 winner')
+    .replace(/Winner/i, 'winner')
+    .replace(/Loser/i, 'loser')
+    .trim();
+  return s || 'TBD';
+}
+
+function koTeam(t, opp, e) {
+  const real = isRealTeam(t);
   const isWinner =
-    e.state === 'post' &&
-    parseInt(t?.score, 10) > parseInt(opponent?.score, 10);
-  const logo = t?.logo
-    ? `<img class="bk-logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
-    : '<span class="bk-logo placeholder"></span>';
-  const label = t?.abbr && /^[A-Z]{2,4}$/.test(t.abbr) ? t.abbr : (t?.abbr || 'TBD');
-  const score = e.state !== 'pre' && t?.score != null ? `<span class="bk-score">${escapeHtml(t.score)}</span>` : '';
-  return `<div class="bk-team${isWinner ? ' winner' : ''}">${logo}<span class="bk-abbr">${escapeHtml(label)}</span>${score}</div>`;
+    e.state === 'post' && parseInt(t?.score, 10) > parseInt(opp?.score, 10);
+  const logo =
+    real && t.logo
+      ? `<img class="ko-logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
+      : '<span class="ko-logo placeholder"></span>';
+  const name = real ? t.short || t.name || t.abbr : prettyPlaceholder(t);
+  const score =
+    e.state !== 'pre' && t?.score != null
+      ? `<span class="ko-score">${escapeHtml(t.score)}</span>`
+      : '';
+  return `<div class="ko-team${isWinner ? ' winner' : ''}${real ? '' : ' tbd'}">${logo}<span class="ko-name">${escapeHtml(name)}</span>${score}</div>`;
 }
 
-function bracketCard(e, span) {
-  if (!e) {
-    return `<div class="bk-match empty" style="--span:${span}"><span class="bk-tbd">TBD</span></div>`;
-  }
-  const day = new Date(e.date).toLocaleDateString([], { month: 'short', day: 'numeric' });
+function koCard(e) {
   const live = e.state === 'in';
+  const day = new Date(e.date).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const meta = live
+    ? `<span class="ko-live">● ${escapeHtml(e.detail || 'LIVE')}</span>`
+    : e.state === 'post'
+    ? `FT · ${escapeHtml(day)}`
+    : `${escapeHtml(day)} · ${escapeHtml(formatTime(e.date))}`;
+  const tappable = isRealTeam(e.home) || isRealTeam(e.away);
   return `
-    <div class="bk-match ${e.state}" style="--span:${span}" data-event-id="${escapeHtml(e.id)}">
-      ${bracketTeamRow(e.home, e.away, e)}
-      ${bracketTeamRow(e.away, e.home, e)}
-      <span class="bk-date">${live ? `<span class="bk-live">● ${escapeHtml(e.detail)}</span>` : escapeHtml(day)}</span>
+    <div class="ko-card ${e.state}${tappable ? ' tappable' : ''}"${tappable ? ` data-event-id="${escapeHtml(e.id)}"` : ''}>
+      ${koTeam(e.home, e.away, e)}
+      ${koTeam(e.away, e.home, e)}
+      <div class="ko-meta">${meta}</div>
     </div>`;
 }
 
 function bracketHTML() {
   const ko = knockoutEvents();
   if (!ko.length) {
-    return `<p class="empty">The knockout bracket appears once the schedule includes the Round of 32 (June 28).</p>`;
+    return `<p class="empty">The knockout bracket appears once the Round of 32 is scheduled (June 28).</p>`;
   }
-  const byNum = {};
-  for (const e of ko) {
-    const n = deriveMatchNumber(e);
-    if (n) byNum[n] = e;
+  const byRound = {};
+  for (const e of ko) (byRound[knockoutRound(e)] ||= []).push(e);
+  for (const k in byRound) {
+    byRound[k].sort((a, b) => new Date(a.date) - new Date(b.date));
   }
-  const col = (nums, span, title) => `
-    <div class="bk-col" style="--rows:16">
-      <h3 class="bk-round">${title}</h3>
-      <div class="bk-col-grid">
-        ${nums.map((n) => bracketCard(byNum[n], span)).join('')}
-      </div>
-    </div>`;
+  const rounds = KO_ROUNDS.filter((r) => byRound[r.key] && byRound[r.key].length);
+  const chips = rounds
+    .map((r) => `<button type="button" class="ko-chip" data-ko-jump="${r.key}">${escapeHtml(r.title)}</button>`)
+    .join('');
+  const sections = rounds
+    .map(
+      (r) => `
+      <section class="ko-round" id="ko-${r.key}">
+        <h2 class="ko-round-title">${escapeHtml(r.title)}<span class="ko-round-count">${byRound[r.key].length}</span></h2>
+        <div class="ko-grid">${byRound[r.key].map(koCard).join('')}</div>
+      </section>`
+    )
+    .join('');
   return `
-    <div class="bracket-wrap">
-      <div class="bracket">
-        ${col(BRACKET_ORDER.r32, 1, 'Round of 32')}
-        ${col(BRACKET_ORDER.r16, 2, 'Round of 16')}
-        ${col(BRACKET_ORDER.qf, 4, 'Quarter-finals')}
-        ${col(BRACKET_ORDER.sf, 8, 'Semi-finals')}
-        ${col(BRACKET_ORDER.final, 16, '🏆 Final')}
-      </div>
-    </div>
-    <div class="bk-third">
-      <h3 class="bk-round">3rd place</h3>
-      ${bracketCard(byNum[103], 1)}
-    </div>
-    <p class="groups-legend">Bracket fills in automatically as the tournament progresses · swipe to explore →</p>`;
+    <div class="ko-wrap">
+      <div class="ko-chips">${chips}</div>
+      ${sections}
+      <p class="groups-legend">Fixtures fill in as the bracket is decided.</p>
+    </div>`;
 }
 
 function renderBracketView() {
@@ -2253,10 +2259,10 @@ function renderBracketView() {
 // --- Predictions game -------------------------------------------------------
 
 const PREDICTIONS_KEY = 'wc2026.predictions.v1';
-// Superior Player of the Match is hidden until we have a reliable source for
-// the official award (ESPN doesn't expose it). All the SPOTM code is kept
-// intact and simply gated off this flag — flip to true to bring it back.
-const SHOW_SPOTM = false;
+// Superior Player of the Match prediction. ESPN exposes no official award, so
+// the "actual" SPOTM is derived from the match timeline (goals weighted, plus
+// assists) in superiorPlayer(). Predicted via a simple dropdown; +3 if called.
+const SHOW_SPOTM = true;
 
 function loadPredictions() {
   try {
@@ -2415,40 +2421,19 @@ function squadList(abbr) {
     .sort((a, b) => POS_RANK[a.pos] - POS_RANK[b.pos] || a.num - b.num);
 }
 
-// Build one team's MOTM picker, grouped into positional rows so it reads
-// like a lineup (no confirmed XI exists pre-match, so we group the squad).
-function motmTeamSection(e, team, squad, motm) {
-  if (!squad.length) return '';
-  const abbr = team.abbr;
-  const groups = [
-    ['GK', 'Goalkeepers'],
-    ['DEF', 'Defenders'],
-    ['MID', 'Midfielders'],
-    ['FWD', 'Forwards'],
-  ];
-  const rows = groups
-    .map(([key, label]) => {
-      const players = squad.filter((pl) => pl.pos === key);
-      if (!players.length) return '';
-      return `
-        <div class="motm-pos-row">
-          <span class="motm-pos-label">${label}</span>
-          <div class="motm-scroll">${players.map((pl) => motmChip(e, abbr, pl, motm)).join('')}</div>
-        </div>`;
+// One team's players as an <optgroup> for the MOTM dropdown. A dropdown keeps
+// the whole squad reachable without the old horizontal-scroll chip maze.
+function motmOptgroup(team, squad, motm) {
+  if (!team || !squad.length) return '';
+  const label = team.short || team.name || team.abbr || '';
+  const opts = squad
+    .map((pl) => {
+      const sel =
+        motm && motm.abbr === team.abbr && String(motm.jersey) === String(pl.num);
+      return `<option value="${escapeHtml(team.abbr)}|${pl.num}"${sel ? ' selected' : ''}>${escapeHtml(pl.name)} · #${pl.num}</option>`;
     })
     .join('');
-  return `<div class="motm-team-label">${escapeHtml(team.short || team.abbr || '')}</div>${rows}`;
-}
-
-function motmChip(e, abbr, pl, motm) {
-  const sel = motm && motm.abbr === abbr && String(motm.jersey) === String(pl.num);
-  const inner = pl.photo
-    ? `<img src="${escapeHtml(pl.photo)}" alt="" loading="lazy" />`
-    : `<span class="motm-num">${pl.num}</span>`;
-  return `<button type="button" class="motm-chip${sel ? ' selected' : ''}" data-ev="${escapeHtml(e.id)}" data-abbr="${escapeHtml(abbr)}" data-jersey="${pl.num}" data-name="${escapeHtml(pl.name)}" title="${escapeHtml(pl.name)} · #${pl.num}">
-    ${inner}
-    <span class="motm-name">${escapeHtml(pl.name.split(' ').pop())}</span>
-  </button>`;
+  return `<optgroup label="${escapeHtml(label)}">${opts}</optgroup>`;
 }
 
 function renderPredictionPanel(e) {
@@ -2484,10 +2469,13 @@ function renderPredictionPanel(e) {
   const motmSection =
     SHOW_SPOTM && (homeSquad.length || awaySquad.length)
       ? `
-    <div class="motm-picker">
-      <h4 class="motm-title">⭐ Superior Player of the Match <span class="motm-bonus">+3 if you call it</span></h4>
-      ${motmTeamSection(e, e.home, homeSquad, motm)}
-      ${motmTeamSection(e, e.away, awaySquad, motm)}
+    <div class="pred-motm">
+      <label class="pred-motm-label" for="motm-${escapeHtml(e.id)}">⭐ Superior Player of the Match <span class="motm-bonus">+3</span></label>
+      <select class="pred-motm-select" id="motm-${escapeHtml(e.id)}" data-ev="${escapeHtml(e.id)}">
+        <option value=""${!motm ? ' selected' : ''}>— Pick a player (optional) —</option>
+        ${motmOptgroup(e.home, homeSquad, motm)}
+        ${motmOptgroup(e.away, awaySquad, motm)}
+      </select>
     </div>`
       : '';
   return `
@@ -2545,24 +2533,25 @@ function onPredictionStep(btn) {
   render(); // draft only — nothing persisted yet
 }
 
-function onMotmPick(chip) {
-  const id = chip.dataset.ev;
+function onMotmChange(select) {
+  const id = select.dataset.ev;
   if (getPrediction(id)) return; // locked
   const cur = { ...getDraft(id) };
   cur.h = cur.h || 0;
   cur.a = cur.a || 0;
-  const pick = {
-    abbr: chip.dataset.abbr,
-    jersey: parseInt(chip.dataset.jersey, 10),
-    name: chip.dataset.name,
-  };
-  if (cur.motm && cur.motm.abbr === pick.abbr && cur.motm.jersey === pick.jersey) {
-    delete cur.motm; // tap again to deselect
+  const val = select.value;
+  if (!val) {
+    delete cur.motm;
   } else {
-    cur.motm = pick;
+    const [abbr, jerseyStr] = val.split('|');
+    const jersey = parseInt(jerseyStr, 10);
+    const pl = squadList(abbr).find((p) => String(p.num) === String(jersey));
+    cur.motm = { abbr, jersey, name: pl ? pl.name : '' };
   }
   draftPredictions[id] = cur;
-  render();
+  // No re-render: the native <select> already shows the choice, and rebuilding
+  // the panel mid-interaction is jarring. The draft persists into the next
+  // render (e.g. a score step) and is read when Save commits.
 }
 
 // Commit the draft → permanent, locked prediction. This is what unlocks the
