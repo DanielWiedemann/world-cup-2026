@@ -1361,12 +1361,24 @@ dialog:not([open]) { display: none !important; }
 .score {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 6px;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
   font-size: 18px;
 }
 .score .dash { color: var(--muted); font-weight: 400; }
+.score-pens {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.score-pens b { color: var(--accent); }
 
 .match-bottom {
   display: flex;
@@ -2445,6 +2457,38 @@ tr.qual-direct .gt-name { color: var(--text); }
 .ko-team.winner .ko-name { color: var(--accent); }
 .ko-score { font-weight: 800; font-size: 16px; flex-shrink: 0; }
 .ko-team.winner .ko-score { color: var(--accent); }
+.ko-pens { font-size: 11px; font-weight: 700; color: var(--muted); margin-left: 3px; }
+.ko-team.winner .ko-pens { color: var(--accent); }
+
+/* Penalty shootout section in the expanded match detail. */
+.pk-section { margin-bottom: 18px; }
+.pk-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.pk-score { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pk-score strong { font-size: 19px; margin: 0 4px; }
+.pk-win { font-size: 12.5px; font-weight: 800; color: var(--accent); }
+.pk-takers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 14px;
+}
+.pk-taker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pk-mark { font-weight: 800; width: 16px; text-align: center; flex-shrink: 0; }
+.pk-taker.scored .pk-mark { color: var(--accent); }
+.pk-taker.missed .pk-mark { color: var(--live); }
+.pk-taker.missed .pk-name { color: var(--muted); text-decoration: line-through; }
+.pk-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-abbr { font-size: 10.5px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
 .ko-meta {
   font-size: 11.5px;
   color: var(--muted);

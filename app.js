@@ -656,6 +656,9 @@ matchesEl.addEventListener('click', (e) => {
     render();
     return;
   }
+  // Interactive prediction controls (the score steppers handle themselves; the
+  // SPOTM dropdown opens a native picker) must NOT toggle/collapse the card.
+  if (e.target.closest('.pred-motm, .pred-row')) return;
   const card = e.target.closest('.match');
   if (!card) return;
   const id = card.dataset.eventId;
@@ -1036,6 +1039,27 @@ function normalize(ev) {
   const away = comp && comp.competitors.find((c) => c.homeAway === 'away');
   const status = ev.status && ev.status.type ? ev.status.type : {};
   const venue = (comp && comp.venue) || {};
+  const hScore = home && home.shootoutScore;
+  const aScore = away && away.shootoutScore;
+  // A knockout draw decided on penalties. shootoutScore + the per-kick takers
+  // live ONLY in the scoreboard `details` (the summary feed lacks them).
+  let shootout = null;
+  if ((Number(hScore) || Number(aScore)) && comp) {
+    const sideById = {};
+    if (home?.team?.id) sideById[home.team.id] = 'home';
+    if (away?.team?.id) sideById[away.team.id] = 'away';
+    const takers = (comp.details || [])
+      .filter((d) => d.shootout)
+      .map((d) => ({
+        side: sideById[d.team && d.team.id] || null,
+        player:
+          (d.athletesInvolved && d.athletesInvolved[0] &&
+            (d.athletesInvolved[0].displayName || d.athletesInvolved[0].shortName)) || '',
+        scored: !!d.scoringPlay,
+      }))
+      .filter((t) => t.side);
+    shootout = { home: Number(hScore) || 0, away: Number(aScore) || 0, takers };
+  }
   return {
     id: ev.id,
     date: ev.date, // ISO UTC
@@ -1044,12 +1068,15 @@ function normalize(ev) {
     state: status.state || 'pre', // pre | in | post
     detail: status.shortDetail || status.detail || '',
     completed: !!status.completed,
+    winner: home && home.winner ? 'home' : away && away.winner ? 'away' : null,
+    shootout, // null, or { home, away, takers:[{side,player,scored}] }
     home: home && {
       name: home.team.displayName,
       short: home.team.shortDisplayName || home.team.abbreviation,
       abbr: home.team.abbreviation,
       logo: home.team.logo,
       score: home.score,
+      shootout: hScore != null ? Number(hScore) : null,
       color: home.team.color ? '#' + home.team.color : '',
     },
     away: away && {
@@ -1058,6 +1085,7 @@ function normalize(ev) {
       abbr: away.team.abbreviation,
       logo: away.team.logo,
       score: away.score,
+      shootout: aScore != null ? Number(aScore) : null,
       color: away.team.color ? '#' + away.team.color : '',
     },
     venue: venue.fullName,
@@ -1647,9 +1675,12 @@ function matchCard(e, { hero = false, forceExpand = false } = {}) {
   const done = e.state === 'post';
   const upcoming = e.state === 'pre';
   const isExpanded = forceExpand || state.expanded.has(e.id);
+  const pensLine = e.shootout
+    ? `<div class="score-pens">${e.winner === 'home' ? `<b>${e.shootout.home}</b>` : e.shootout.home}–${e.winner === 'away' ? `<b>${e.shootout.away}</b>` : e.shootout.away} pens</div>`
+    : '';
   const score =
     !upcoming && e.home && e.away
-      ? `<div class="score"><span>${escapeHtml(e.home.score)}</span><span class="dash">–</span><span>${escapeHtml(e.away.score)}</span></div>`
+      ? `<div class="score"><span>${escapeHtml(e.home.score)}</span><span class="dash">–</span><span>${escapeHtml(e.away.score)}</span>${pensLine}</div>`
       : `<div class="kickoff">${formatTime(e.date)}</div>`;
   const badge = live
     ? `<span class="badge live">● Live · ${escapeHtml(e.detail)}</span>`
@@ -2190,16 +2221,24 @@ function prettyPlaceholder(t) {
 
 function koTeam(t, opp, e) {
   const real = isRealTeam(t);
-  const isWinner =
-    e.state === 'post' && parseInt(t?.score, 10) > parseInt(opp?.score, 10);
+  const side = t === e.home ? 'home' : 'away';
+  // Prefer ESPN's winner flag (a penalty win is a 1–1 draw, so score compare
+  // alone can't pick the winner); fall back to score for older data.
+  const isWinner = e.winner
+    ? e.winner === side
+    : e.state === 'post' && parseInt(t?.score, 10) > parseInt(opp?.score, 10);
   const logo =
     real && t.logo
       ? `<img class="ko-logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
       : '<span class="ko-logo placeholder"></span>';
   const name = real ? t.short || t.name || t.abbr : prettyPlaceholder(t);
+  const pens =
+    e.shootout && t && t.shootout != null
+      ? `<span class="ko-pens">(${t.shootout})</span>`
+      : '';
   const score =
     e.state !== 'pre' && t?.score != null
-      ? `<span class="ko-score">${escapeHtml(t.score)}</span>`
+      ? `<span class="ko-score">${escapeHtml(t.score)}${pens}</span>`
       : '';
   return `<div class="ko-team${isWinner ? ' winner' : ''}${real ? '' : ' tbd'}">${logo}<span class="ko-name">${escapeHtml(name)}</span>${score}</div>`;
 }
@@ -2210,7 +2249,7 @@ function koCard(e) {
   const meta = live
     ? `<span class="ko-live">● ${escapeHtml(e.detail || 'LIVE')}</span>`
     : e.state === 'post'
-    ? `FT · ${escapeHtml(day)}`
+    ? `FT${e.shootout ? ' · pens' : ''} · ${escapeHtml(day)}`
     : `${escapeHtml(day)} · ${escapeHtml(formatTime(e.date))}`;
   const tappable = isRealTeam(e.home) || isRealTeam(e.away);
   return `
@@ -3030,11 +3069,45 @@ function renderStats(e) {
     <div class="stats">
       ${predStatus}
       ${hasTimeline ? renderTimeline(e, entry.timeline, entry.lineups) : ''}
+      ${e.shootout ? renderShootout(e) : ''}
       ${hasRows ? renderStatsTable(e, entry.rows) : ''}
       ${hasLineups ? renderLineups(e, entry.lineups) : ''}
       ${renderMatchInfo(entry.info)}
     </div>
   `;
+}
+
+// Penalty shootout result + who took each kick (only when a knockout draw was
+// decided on penalties). Data comes from the event itself (normalize()).
+function renderShootout(e) {
+  const s = e.shootout;
+  if (!s) return '';
+  const winSide = s.home > s.away ? 'home' : s.away > s.home ? 'away' : null;
+  const winName = winSide
+    ? (winSide === 'home' ? e.home : e.away)?.short ||
+      (winSide === 'home' ? e.home : e.away)?.name || ''
+    : '';
+  const taker = (t) => {
+    const team = t.side === 'home' ? e.home : e.away;
+    const photo = photoFor(team?.abbr, '');
+    return `<div class="pk-taker ${t.scored ? 'scored' : 'missed'}">
+      <span class="pk-mark">${t.scored ? '✓' : '✗'}</span>
+      <span class="pk-name">${escapeHtml(t.player || '—')}</span>
+      <span class="pk-abbr">${escapeHtml(team?.abbr || '')}</span>
+    </div>`;
+  };
+  const takers = (s.takers || []).length
+    ? `<div class="pk-takers">${s.takers.map(taker).join('')}</div>`
+    : '';
+  return `
+    <div class="stats-section pk-section">
+      <h3 class="stats-section-title">Penalty shootout</h3>
+      <div class="pk-result">
+        <span class="pk-score">${escapeHtml(e.home?.short || e.home?.abbr || '')} <strong>${s.home}–${s.away}</strong> ${escapeHtml(e.away?.short || e.away?.abbr || '')}</span>
+        ${winName ? `<span class="pk-win">🏆 ${escapeHtml(winName)} advance</span>` : ''}
+      </div>
+      ${takers}
+    </div>`;
 }
 
 function renderMatchInfo(info) {
