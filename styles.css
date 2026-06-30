@@ -2365,99 +2365,117 @@ tr.qual-direct .gt-name { color: var(--text); }
 .sc-unit { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .sc-extra { font-size: 10.5px; color: var(--muted); min-width: 56px; text-align: right; }
 
-/* --- Knockout bracket: clear round-by-round sections --- */
-.ko-chips {
-  display: flex;
-  gap: 8px;
+/* --- Knockout bracket: horizontal-scroll tree with connector lines --- */
+.bkt-scroll {
+  --ko-col: 160px;
+  --ko-gap: 18px; /* connector lane width to the left of each card */
+  --ko-line: color-mix(in srgb, var(--accent) 32%, var(--border));
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  margin: 0 -14px 16px;
-  padding: 2px 14px 4px;
+  scrollbar-width: thin;
+  margin: 0 -14px;
+  padding: 0 14px 10px;
 }
-.ko-chips::-webkit-scrollbar { display: none; }
-.ko-chip {
-  flex: 0 0 auto;
-  padding: 7px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-weight: 700;
-  font-size: 12.5px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.ko-chip:active { background: var(--surface-2); }
-.ko-round {
-  margin-bottom: 24px;
-  scroll-margin-top: 150px;
-}
-.ko-round-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
+.bkt-headers { display: flex; width: max-content; }
+.bkt-head {
+  flex: 0 0 var(--ko-col);
+  padding: 0 0 9px var(--ko-gap);
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
   color: color-mix(in srgb, var(--accent) 60%, var(--muted));
-  margin: 0 0 12px;
-  padding-bottom: 7px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
-.ko-round-count {
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
-  background: var(--surface-2);
-  border-radius: 999px;
-  padding: 1px 9px;
+.bkt { display: flex; align-items: stretch; width: max-content; }
+.bkt-col { display: flex; flex-direction: column; flex: 0 0 var(--ko-col); }
+.bkt-cell {
+  flex: 1 0 auto;
+  display: flex;
+  align-items: center;
+  position: relative;
 }
-.ko-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
-  gap: 10px;
-}
-.ko-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px;
+.bkt-card {
+  position: relative;
+  z-index: 1;
+  width: calc(100% - var(--ko-gap));
+  margin-left: var(--ko-gap);
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 7px 9px;
   font-variant-numeric: tabular-nums;
 }
-.ko-card.tappable { cursor: pointer; transition: border-color 0.15s ease, transform 0.1s ease; }
-.ko-card.tappable:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
-.ko-card.tappable:active { transform: scale(0.99); }
-.ko-card.in {
+.bkt-card.tappable { cursor: pointer; transition: border-color 0.15s ease, transform 0.1s ease; }
+.bkt-card.tappable:active { transform: scale(0.99); }
+.bkt-card.in {
   border-color: color-mix(in srgb, var(--live) 50%, var(--border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--live) 30%, transparent);
 }
+.bkt-card.empty {
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  opacity: 0.55;
+  min-height: 46px;
+}
+.bkt-tbd { color: var(--muted); font-size: 11px; font-weight: 600; }
+/* Connector "⊐": every child match (all columns except R32) draws, in the lane
+   to its left, the bracket joining its two feeders. The cell is exactly twice
+   the height of a feeder cell, so the top/bottom arms (at 25%/75%) line up with
+   the two feeders and the vertical bus meets the card's left-centre. */
+.bkt-col:not(.bkt-col-r32) .bkt-cell::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: var(--ko-gap);
+  top: 25%;
+  bottom: 25%;
+  border: 2px solid var(--ko-line);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+}
+.bkt-meta {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+}
+.bkt-third { margin-top: 20px; max-width: 300px; }
+.bkt-third-title {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--accent) 60%, var(--muted));
+  margin: 0 0 10px;
+}
+.bkt-third-card .bkt-cell { display: block; }
+.bkt-third-card .bkt-card { margin-left: 0; width: 100%; }
+
 .ko-team {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
 }
-.ko-logo { width: 24px; height: 24px; object-fit: contain; flex-shrink: 0; }
-.ko-logo.placeholder { background: var(--surface-2); border-radius: 5px; }
+.ko-logo { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+.ko-logo.placeholder { background: var(--surface-2); border-radius: 4px; }
 .ko-name {
   flex: 1;
   min-width: 0;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ko-team.tbd .ko-name { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.ko-team.tbd .ko-name { color: var(--muted); font-weight: 600; font-size: 11px; }
 .ko-team.winner .ko-name { color: var(--accent); }
-.ko-score { font-weight: 800; font-size: 16px; flex-shrink: 0; }
+.ko-score { font-weight: 800; font-size: 13px; flex-shrink: 0; }
 .ko-team.winner .ko-score { color: var(--accent); }
-.ko-pens { font-size: 11px; font-weight: 700; color: var(--muted); margin-left: 3px; }
+.ko-pens { font-size: 10px; font-weight: 700; color: var(--muted); margin-left: 2px; }
 .ko-team.winner .ko-pens { color: var(--accent); }
 
 /* Penalty shootout section in the expanded match detail. */
@@ -2489,13 +2507,6 @@ tr.qual-direct .gt-name { color: var(--text); }
 .pk-taker.missed .pk-name { color: var(--muted); text-decoration: line-through; }
 .pk-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pk-abbr { font-size: 10.5px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
-.ko-meta {
-  font-size: 11.5px;
-  color: var(--muted);
-  font-weight: 600;
-  padding-top: 7px;
-  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
-}
 .ko-live { color: var(--live); font-weight: 800; }
 
 @media (prefers-reduced-motion: reduce) {

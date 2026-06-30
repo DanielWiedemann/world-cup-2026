@@ -583,15 +583,8 @@ matchesEl.addEventListener('click', (e) => {
     }
     return;
   }
-  // Bracket round chip → jump to that round's section.
-  const koJump = e.target.closest('.ko-chip');
-  if (koJump) {
-    const sec = document.getElementById(`ko-${koJump.dataset.koJump}`);
-    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
   // Bracket card with a real team → open that game in the schedule.
-  const koCardEl = e.target.closest('.ko-card.tappable[data-event-id]');
+  const koCardEl = e.target.closest('.bkt-card.tappable[data-event-id]');
   if (koCardEl) {
     const id = koCardEl.dataset.eventId;
     userNavigated = true;
@@ -2156,21 +2149,37 @@ function renderScorersView() {
 
 // --- Knockout bracket --------------------------------------------------------
 //
-// ESPN's site scoreboard feed carries no reliable match number, and the old
-// approach (deriving bracket position from placeholder pairings like "2A|2B")
-// broke the instant real teams were drawn in — every knockout game then fell
-// out of the bracket. Instead we group fixtures by ROUND: from the placeholder
-// text while teams are still TBD, otherwise from the fixed 2026 schedule dates.
-// Each round is laid out as its own clear vertical section.
+// A real bracket tree needs to know which match feeds which — i.e. each game's
+// FIFA match number (M73–M104). ESPN's site scoreboard feed doesn't carry it,
+// so we read it from ESPN's core API (one tiny request per game, cached
+// permanently since a match number never changes) and slot each game into the
+// fixed 2026 layout. Rendered as a horizontal-scroll tree with connector lines
+// — the classic bracket, sized for a phone.
 
-const KO_ROUNDS = [
+// Fixed display order per round (top→bottom). Adjacent pairs feed the next
+// round's match, so a column spaced evenly auto-aligns each match between its
+// two feeders. Verified against ESPN match numbers (and the official chart).
+const BRACKET_ORDER = {
+  r32: [74, 77, 73, 75, 83, 84, 81, 82, 76, 78, 79, 80, 86, 88, 85, 87],
+  r16: [89, 90, 93, 94, 91, 92, 95, 96],
+  qf: [97, 98, 99, 100],
+  sf: [101, 102],
+  final: [104],
+};
+const THIRD_PLACE_MATCH = 103;
+const KO_COLS = [
   { key: 'r32', title: 'Round of 32' },
   { key: 'r16', title: 'Round of 16' },
   { key: 'qf', title: 'Quarter-finals' },
   { key: 'sf', title: 'Semi-finals' },
-  { key: 'third', title: 'Third place' },
   { key: 'final', title: 'Final' },
 ];
+
+const MATCHNUM_CACHE_KEY = 'wc2026.matchnums.v2';
+let matchNums = (() => {
+  try { return JSON.parse(localStorage.getItem(MATCHNUM_CACHE_KEY)) || {}; } catch { return {}; }
+})();
+let matchNumsLoading = false;
 
 function knockoutEvents() {
   return state.events.filter(
@@ -2178,24 +2187,36 @@ function knockoutEvents() {
   );
 }
 
-// Which round a knockout fixture belongs to. Placeholder names carry the round
-// explicitly while teams are TBD ("RD32" feeds the R16, "QFW" feeds the SF…);
-// once real teams are drawn we fall back to the fixed schedule date windows.
-function knockoutRound(e) {
-  const txt = `${e.home?.abbr || ''} ${e.away?.abbr || ''} ${e.home?.name || ''} ${e.away?.name || ''} ${e.name || ''}`;
-  if (/SF\s*W|Semifinal \d+ Winner/i.test(txt)) return 'final';
-  if (/SF\s*L|Semifinal \d+ Loser/i.test(txt)) return 'third';
-  if (/Q[F]?\s*W\s*\d|Quarterfinal \d+ Winner/i.test(txt)) return 'sf';
-  if (/RD\s*16|Round of 16/i.test(txt)) return 'qf';
-  if (/RD\s*32|Round of 32/i.test(txt)) return 'r16';
-  const t = new Date(e.date).getTime();
-  const D = (s) => new Date(s + 'T00:00:00Z').getTime();
-  if (t < D('2026-07-04')) return 'r32';
-  if (t < D('2026-07-08')) return 'r16';
-  if (t < D('2026-07-13')) return 'qf';
-  if (t < D('2026-07-17')) return 'sf';
-  if (t < D('2026-07-19')) return 'third';
-  return 'final';
+// ESPN's matchNumber lives in the core API, not the site scoreboard. Fetch the
+// ones we don't have yet (cached permanently), then re-render the bracket.
+async function ensureMatchNumbers() {
+  const missing = knockoutEvents().filter((e) => !matchNums[e.id]);
+  if (!missing.length || matchNumsLoading) return;
+  matchNumsLoading = true;
+  try {
+    const results = await Promise.allSettled(
+      missing.map(async (e) => {
+        const url = `https://sports.core.api.espn.com/v2/sports/soccer/leagues/fifa.world/events/${e.id}/competitions/${e.id}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('core ' + res.status);
+        const data = await res.json();
+        return { id: e.id, n: data && data.matchNumber };
+      })
+    );
+    let got = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value && r.value.n) {
+        matchNums[r.value.id] = r.value.n;
+        got++;
+      }
+    }
+    if (got) {
+      try { localStorage.setItem(MATCHNUM_CACHE_KEY, JSON.stringify(matchNums)); } catch {}
+      if (state.filter === 'bracket' && !state.search.trim()) render();
+    }
+  } finally {
+    matchNumsLoading = false;
+  }
 }
 
 // A real qualified team (vs a "Winner of…" placeholder).
@@ -2243,21 +2264,25 @@ function koTeam(t, opp, e) {
   return `<div class="ko-team${isWinner ? ' winner' : ''}${real ? '' : ' tbd'}">${logo}<span class="ko-name">${escapeHtml(name)}</span>${score}</div>`;
 }
 
-function koCard(e) {
+// One match in the bracket grid (a card, or an empty slot while unscheduled).
+function bracketCell(e, num) {
+  if (!e) {
+    return `<div class="bkt-cell"><div class="bkt-card empty"><span class="bkt-tbd">Match ${num}</span></div></div>`;
+  }
   const live = e.state === 'in';
-  const day = new Date(e.date).toLocaleDateString([], { month: 'short', day: 'numeric' });
   const meta = live
     ? `<span class="ko-live">● ${escapeHtml(e.detail || 'LIVE')}</span>`
     : e.state === 'post'
-    ? `FT${e.shootout ? ' · pens' : ''} · ${escapeHtml(day)}`
-    : `${escapeHtml(day)} · ${escapeHtml(formatTime(e.date))}`;
+    ? `FT${e.shootout ? ' · pens' : ''}`
+    : `${escapeHtml(new Date(e.date).toLocaleDateString([], { month: 'short', day: 'numeric' }))} · ${escapeHtml(formatTime(e.date))}`;
   const tappable = isRealTeam(e.home) || isRealTeam(e.away);
-  return `
-    <div class="ko-card ${e.state}${tappable ? ' tappable' : ''}"${tappable ? ` data-event-id="${escapeHtml(e.id)}"` : ''}>
+  return `<div class="bkt-cell">
+    <div class="bkt-card ${e.state}${tappable ? ' tappable' : ''}"${tappable ? ` data-event-id="${escapeHtml(e.id)}"` : ''}>
       ${koTeam(e.home, e.away, e)}
       ${koTeam(e.away, e.home, e)}
-      <div class="ko-meta">${meta}</div>
-    </div>`;
+      <div class="bkt-meta">${meta}</div>
+    </div>
+  </div>`;
 }
 
 function bracketHTML() {
@@ -2265,30 +2290,38 @@ function bracketHTML() {
   if (!ko.length) {
     return `<p class="empty">The knockout bracket appears once the Round of 32 is scheduled (June 28).</p>`;
   }
-  const byRound = {};
-  for (const e of ko) (byRound[knockoutRound(e)] ||= []).push(e);
-  for (const k in byRound) {
-    byRound[k].sort((a, b) => new Date(a.date) - new Date(b.date));
+  ensureMatchNumbers(); // fills missing numbers from the core API, then re-renders
+  const byNum = {};
+  for (const e of ko) {
+    const n = matchNums[e.id];
+    if (!n) continue;
+    // On a rare duplicate (ESPN projection artifact) prefer the real/played one.
+    const cur = byNum[n];
+    if (!cur || ((isRealTeam(e.home) || isRealTeam(e.away) || e.state !== 'pre') &&
+                 !(isRealTeam(cur.home) || isRealTeam(cur.away) || cur.state !== 'pre'))) {
+      byNum[n] = e;
+    }
   }
-  const rounds = KO_ROUNDS.filter((r) => byRound[r.key] && byRound[r.key].length);
-  const chips = rounds
-    .map((r) => `<button type="button" class="ko-chip" data-ko-jump="${r.key}">${escapeHtml(r.title)}</button>`)
-    .join('');
-  const sections = rounds
-    .map(
-      (r) => `
-      <section class="ko-round" id="ko-${r.key}">
-        <h2 class="ko-round-title">${escapeHtml(r.title)}<span class="ko-round-count">${byRound[r.key].length}</span></h2>
-        <div class="ko-grid">${byRound[r.key].map(koCard).join('')}</div>
-      </section>`
-    )
-    .join('');
+  if (!Object.keys(byNum).length) {
+    return `<p class="empty">Loading bracket…</p>`;
+  }
+  const headers = KO_COLS.map((c) => `<div class="bkt-head">${escapeHtml(c.title)}</div>`).join('');
+  const cols = KO_COLS.map(
+    (c) =>
+      `<div class="bkt-col bkt-col-${c.key}">${BRACKET_ORDER[c.key]
+        .map((n) => bracketCell(byNum[n], n))
+        .join('')}</div>`
+  ).join('');
+  const third = byNum[THIRD_PLACE_MATCH];
   return `
-    <div class="ko-wrap">
-      <div class="ko-chips">${chips}</div>
-      ${sections}
-      <p class="groups-legend">Fixtures fill in as the bracket is decided.</p>
-    </div>`;
+    <div class="bkt-scroll">
+      <div class="bkt-headers">${headers}</div>
+      <div class="bkt">${cols}</div>
+    </div>
+    ${third
+      ? `<div class="bkt-third"><h3 class="bkt-third-title">🥉 Third place</h3><div class="bkt-third-card">${bracketCell(third, THIRD_PLACE_MATCH)}</div></div>`
+      : ''}
+    <p class="groups-legend">Swipe across to follow the path to the final →</p>`;
 }
 
 function renderBracketView() {
