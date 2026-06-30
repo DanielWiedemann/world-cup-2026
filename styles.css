@@ -1604,6 +1604,7 @@ dialog:not([open]) { display: none !important; }
 }
 .group-table {
   width: 100%;
+  table-layout: fixed; /* fixed columns → every group's table lines up identically */
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
   font-size: 12.5px;
@@ -1614,17 +1615,23 @@ dialog:not([open]) { display: none !important; }
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
-  text-align: center;
-  padding: 2px 3px 6px;
+  text-align: right; /* numeric columns hug the right */
+  padding: 2px 4px 6px;
 }
-.group-table th.gt-team { text-align: left; }
 .group-table td {
-  padding: 5px 3px;
-  text-align: center;
+  padding: 5px 4px;
+  text-align: right;
   color: var(--muted);
 }
+.group-table th.gt-team,
+.group-table td.gt-team { text-align: left; }
+.group-table th.gt-pos,
+.group-table td.gt-pos { text-align: center; }
 .group-table tr + tr td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-.gt-pos { width: 26px; }
+/* Fixed widths so P / FORM / GD / PTS align across every group; Team takes the
+   remaining space. */
+.gt-pos { width: 30px; }
+.gt-p { width: 26px; }
 .pos-chip {
   display: inline-grid;
   place-items: center;
@@ -1645,8 +1652,10 @@ tr.qual-maybe .pos-chip {
   border-color: color-mix(in srgb, var(--qual, var(--accent)) 50%, transparent);
 }
 .gt-team {
-  text-align: left !important;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .gt-team .gt-logo {
   width: 16px;
@@ -1662,7 +1671,7 @@ tr.qual-maybe .pos-chip {
 }
 tr.qual-direct .gt-name { color: var(--text); }
 /* Form column: a coloured dot per group game (green win / grey draw / red loss). */
-.gt-form { white-space: nowrap; min-width: 44px; }
+.gt-form { width: 54px; white-space: nowrap; }
 .form-dot {
   display: inline-block;
   width: 9px;
@@ -1675,8 +1684,9 @@ tr.qual-direct .gt-name { color: var(--text); }
 .form-dot.d { background: var(--muted); }
 .form-dot.l { background: var(--live); }
 .gt-form-empty { color: var(--muted); }
-.gt-gd { min-width: 28px; }
+.gt-gd { width: 36px; }
 .gt-pts {
+  width: 34px;
   font-weight: 800 !important;
   color: var(--text) !important;
 }

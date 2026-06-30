@@ -3976,7 +3976,7 @@ function groupsHTML() {
               ${t.logo ? `<img class="gt-logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />` : ''}
               <span class="gt-name">${escapeHtml(t.name)}</span>
             </td>
-            <td>${escapeHtml(t.gp)}</td>
+            <td class="gt-p">${escapeHtml(t.gp)}</td>
             <td class="gt-form">${formDots(t.abbr, groupAbbrs)}</td>
             <td class="gt-gd">${escapeHtml(t.gd)}</td>
             <td class="gt-pts">${escapeHtml(t.pts)}</td>
@@ -3988,7 +3988,7 @@ function groupsHTML() {
         <h2 class="group-title">${escapeHtml(g.name)}</h2>
         <table class="group-table">
           <thead>
-            <tr><th class="gt-pos"></th><th class="gt-team">Team</th><th>P</th><th class="gt-form">Form</th><th class="gt-gd">GD</th><th class="gt-pts">Pts</th></tr>
+            <tr><th class="gt-pos"></th><th class="gt-team">Team</th><th class="gt-p">P</th><th class="gt-form">Form</th><th class="gt-gd">GD</th><th class="gt-pts">Pts</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
