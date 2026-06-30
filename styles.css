@@ -1661,6 +1661,20 @@ tr.qual-maybe .pos-chip {
   font-size: 12.5px;
 }
 tr.qual-direct .gt-name { color: var(--text); }
+/* Form column: a coloured dot per group game (green win / grey draw / red loss). */
+.gt-form { white-space: nowrap; min-width: 44px; }
+.form-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin: 0 1.5px;
+  vertical-align: middle;
+}
+.form-dot.w { background: var(--accent); }
+.form-dot.d { background: var(--muted); }
+.form-dot.l { background: var(--live); }
+.gt-form-empty { color: var(--muted); }
 .gt-gd { min-width: 28px; }
 .gt-pts {
   font-weight: 800 !important;
@@ -2429,8 +2443,8 @@ tr.qual-direct .gt-name { color: var(--text); }
 
 /* --- Knockout bracket: horizontal-scroll tree with connector lines --- */
 .bkt-scroll {
-  --ko-col: 160px;
-  --ko-gap: 18px; /* connector lane width to the left of each card */
+  --ko-col: 122px;
+  --ko-gap: 16px; /* connector lane width beside each card */
   --ko-line: color-mix(in srgb, var(--accent) 32%, var(--border));
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -2459,10 +2473,10 @@ tr.qual-direct .gt-name { color: var(--text); }
 .bkt-card {
   position: relative;
   z-index: 1;
-  /* A little breathing room around every box (keeps left = lane width so the
-     connector bus still meets the card). */
+  /* A little breathing room around every box; the connector lane (ko-gap) sits
+     on the inward side (right for the left half, left for the right half). */
   width: calc(100% - var(--ko-gap) - 6px);
-  margin: 3px 3px 3px var(--ko-gap);
+  margin: 3px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -2486,11 +2500,19 @@ tr.qual-direct .gt-name { color: var(--text); }
   min-height: 46px;
 }
 .bkt-tbd { color: var(--muted); font-size: 11px; font-weight: 600; }
-/* Connector "⊐": every child match (all columns except R32) draws, in the lane
-   to its left, the bracket joining its two feeders. The cell is exactly twice
-   the height of a feeder cell, so the top/bottom arms (at 25%/75%) line up with
-   the two feeders and the vertical bus meets the card's left-centre. */
-.bkt-col:not(.bkt-col-r32) .bkt-cell::before {
+/* Connector lane sits on the inward side: left half joins leftward, right half
+   joins rightward, both converging on the centre final. */
+.side-left .bkt-card { margin-left: var(--ko-gap); }
+.side-right .bkt-card { margin-right: var(--ko-gap); }
+.col-center .bkt-card {
+  margin-left: var(--ko-gap);
+  margin-right: var(--ko-gap);
+  width: calc(100% - 2 * var(--ko-gap) - 6px);
+}
+/* Connector bracket: every child cell is exactly twice the height of a feeder
+   cell, so arms drawn at 25%/75% line up with its two feeders, and the vertical
+   bus meets the card's inward centre. "⊐" for the left half, "⊏" for the right. */
+.bkt-col.side-left.has-conn .bkt-cell::before {
   content: '';
   position: absolute;
   left: 0;
@@ -2501,6 +2523,29 @@ tr.qual-direct .gt-name { color: var(--text); }
   border-left: 0;
   border-radius: 0 8px 8px 0;
 }
+.bkt-col.side-right.has-conn .bkt-cell::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  width: var(--ko-gap);
+  top: 25%;
+  bottom: 25%;
+  border: 2px solid var(--ko-line);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+}
+/* The final has one feeder on each side — a straight line each way. */
+.bkt-final-cell::before,
+.bkt-final-cell::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: var(--ko-gap);
+  height: 2px;
+  background: var(--ko-line);
+}
+.bkt-final-cell::before { left: 0; }
+.bkt-final-cell::after { right: 0; }
 .bkt-meta {
   font-size: 10px;
   font-weight: 600;

@@ -2188,14 +2188,6 @@ const BRACKET_ORDER = {
   final: [104],
 };
 const THIRD_PLACE_MATCH = 103;
-const KO_COLS = [
-  { key: 'r32', title: 'Round of 32' },
-  { key: 'r16', title: 'Round of 16' },
-  { key: 'qf', title: 'Quarter-finals' },
-  { key: 'sf', title: 'Semi-finals' },
-  { key: 'final', title: 'Final' },
-];
-
 const MATCHNUM_CACHE_KEY = 'wc2026.matchnums.v2';
 let matchNums = (() => {
   try { return JSON.parse(localStorage.getItem(MATCHNUM_CACHE_KEY)) || {}; } catch { return {}; }
@@ -2273,7 +2265,7 @@ function koTeam(t, opp, e) {
     real && t.logo
       ? `<img class="ko-logo" src="${escapeHtml(t.logo)}" alt="" loading="lazy" />`
       : '<span class="ko-logo placeholder"></span>';
-  const name = real ? t.short || t.name || t.abbr : prettyPlaceholder(t);
+  const name = real ? t.abbr || t.short || t.name : prettyPlaceholder(t);
   const pens =
     e.shootout && t && t.shootout != null
       ? `<span class="ko-pens">(${t.shootout})</span>`
@@ -2286,9 +2278,10 @@ function koTeam(t, opp, e) {
 }
 
 // One match in the bracket grid (a card, or an empty slot while unscheduled).
-function bracketCell(e, num) {
+function bracketCell(e, num, cellClass = '') {
+  const cls = `bkt-cell${cellClass ? ' ' + cellClass : ''}`;
   if (!e) {
-    return `<div class="bkt-cell"><div class="bkt-card empty"><span class="bkt-tbd">Match ${num}</span></div></div>`;
+    return `<div class="${cls}"><div class="bkt-card empty"><span class="bkt-tbd">Match ${num}</span></div></div>`;
   }
   const live = e.state === 'in';
   const meta = live
@@ -2297,7 +2290,7 @@ function bracketCell(e, num) {
     ? `FT${e.shootout ? ' · pens' : ''}`
     : `${escapeHtml(new Date(e.date).toLocaleDateString([], { month: 'short', day: 'numeric' }))} · ${escapeHtml(formatTime(e.date))}`;
   const tappable = isRealTeam(e.home) || isRealTeam(e.away);
-  return `<div class="bkt-cell">
+  return `<div class="${cls}">
     <div class="bkt-card ${e.state}${tappable ? ' tappable' : ''}"${tappable ? ` data-event-id="${escapeHtml(e.id)}"` : ''}>
       ${koTeam(e.home, e.away, e)}
       ${koTeam(e.away, e.home, e)}
@@ -2326,23 +2319,42 @@ function bracketHTML() {
   if (!Object.keys(byNum).length) {
     return `<p class="empty">Loading bracket…</p>`;
   }
-  const headers = KO_COLS.map((c) => `<div class="bkt-head">${escapeHtml(c.title)}</div>`).join('');
-  const cols = KO_COLS.map(
-    (c) =>
-      `<div class="bkt-col bkt-col-${c.key}">${BRACKET_ORDER[c.key]
-        .map((n) => bracketCell(byNum[n], n))
-        .join('')}</div>`
-  ).join('');
+  // Two-sided converging bracket: the left half runs inward (R32→SF→Final) and
+  // the right half mirrors it. Each round's first half feeds the left semi, the
+  // second half the right semi.
+  const L = (arr) => arr.slice(0, arr.length / 2);
+  const R = (arr) => arr.slice(arr.length / 2);
+  const col = (cls, nums, cellClass) =>
+    `<div class="bkt-col ${cls}">${nums.map((n) => bracketCell(byNum[n], n, cellClass)).join('')}</div>`;
+
+  const left =
+    col('side-left col-r32', L(BRACKET_ORDER.r32)) +
+    col('side-left has-conn col-r16', L(BRACKET_ORDER.r16)) +
+    col('side-left has-conn col-qf', L(BRACKET_ORDER.qf)) +
+    col('side-left has-conn col-sf', [BRACKET_ORDER.sf[0]]);
+  const center = col('col-center', [BRACKET_ORDER.final[0]], 'bkt-final-cell');
+  const right =
+    col('side-right has-conn col-sf', [BRACKET_ORDER.sf[1]]) +
+    col('side-right has-conn col-qf', R(BRACKET_ORDER.qf)) +
+    col('side-right has-conn col-r16', R(BRACKET_ORDER.r16)) +
+    col('side-right col-r32', R(BRACKET_ORDER.r32));
+
+  const headLabels = [
+    'Round of 32', 'Round of 16', 'Quarter-finals', 'Semi-finals',
+    'Final',
+    'Semi-finals', 'Quarter-finals', 'Round of 16', 'Round of 32',
+  ];
+  const headers = headLabels.map((h) => `<div class="bkt-head">${escapeHtml(h)}</div>`).join('');
   const third = byNum[THIRD_PLACE_MATCH];
   return `
     <div class="bkt-scroll">
       <div class="bkt-headers">${headers}</div>
-      <div class="bkt">${cols}</div>
+      <div class="bkt">${left}${center}${right}</div>
     </div>
     ${third
       ? `<div class="bkt-third"><h3 class="bkt-third-title">🥉 Third place</h3><div class="bkt-third-card">${bracketCell(third, THIRD_PLACE_MATCH)}</div></div>`
       : ''}
-    <p class="groups-legend">Swipe across to follow the path to the final →</p>`;
+    <p class="groups-legend">Swipe across — the bracket runs inward to the final.</p>`;
 }
 
 function renderBracketView() {
@@ -3910,6 +3922,38 @@ function qualClass(t) {
   return t.rank <= 2 ? 'qual-direct' : t.rank === 3 ? 'qual-maybe' : '';
 }
 
+// A team's group-stage results in order (oldest→newest) as 'w' | 'd' | 'l',
+// derived from the finished group matches in state.events (before the knockouts
+// begin on June 28). Drives the coloured form dots in the group table.
+function teamGroupForm(abbr) {
+  const KO = new Date('2026-06-28T00:00:00Z').getTime();
+  return state.events
+    .filter(
+      (e) =>
+        e.state === 'post' &&
+        new Date(e.date).getTime() < KO &&
+        (e.home?.abbr === abbr || e.away?.abbr === abbr)
+    )
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map((e) => {
+      const home = e.home?.abbr === abbr;
+      const me = parseInt((home ? e.home : e.away)?.score, 10);
+      const opp = parseInt((home ? e.away : e.home)?.score, 10);
+      if (!Number.isFinite(me) || !Number.isFinite(opp)) return null;
+      return me > opp ? 'w' : me < opp ? 'l' : 'd';
+    })
+    .filter(Boolean);
+}
+
+function formDots(abbr) {
+  const form = teamGroupForm(abbr);
+  if (!form.length) return '<span class="gt-form-empty">–</span>';
+  const label = { w: 'Win', d: 'Draw', l: 'Loss' };
+  return form
+    .map((r) => `<span class="form-dot ${r}" title="${label[r]}"></span>`)
+    .join('');
+}
+
 function groupsHTML() {
   const s = state.standings;
   if (!s || !s.groups?.length) {
@@ -3930,9 +3974,7 @@ function groupsHTML() {
               <span class="gt-name">${escapeHtml(t.name)}</span>
             </td>
             <td>${escapeHtml(t.gp)}</td>
-            <td>${escapeHtml(t.w)}</td>
-            <td>${escapeHtml(t.d)}</td>
-            <td>${escapeHtml(t.l)}</td>
+            <td class="gt-form">${formDots(t.abbr)}</td>
             <td class="gt-gd">${escapeHtml(t.gd)}</td>
             <td class="gt-pts">${escapeHtml(t.pts)}</td>
           </tr>`;
@@ -3943,7 +3985,7 @@ function groupsHTML() {
         <h2 class="group-title">${escapeHtml(g.name)}</h2>
         <table class="group-table">
           <thead>
-            <tr><th class="gt-pos"></th><th class="gt-team">Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th class="gt-gd">GD</th><th class="gt-pts">Pts</th></tr>
+            <tr><th class="gt-pos"></th><th class="gt-team">Team</th><th>P</th><th class="gt-form">Form</th><th class="gt-gd">GD</th><th class="gt-pts">Pts</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
