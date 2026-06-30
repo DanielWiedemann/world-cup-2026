@@ -1867,8 +1867,14 @@ tr.qual-direct .gt-name { color: var(--text); }
   padding: 1px 7px;
   margin-left: 4px;
 }
-.pred-motm-select {
+/* Custom SPOTM dropdown (a native <select> can't show player photos). */
+.motm-dd { position: relative; }
+.motm-dd-trigger {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -1876,19 +1882,75 @@ tr.qual-direct .gt-name { color: var(--text); }
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 12px 14px;
-  -webkit-appearance: none;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238aa39a' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 14px center;
-  padding-right: 34px;
+  padding: 6px 12px;
   cursor: pointer;
+  text-align: left;
 }
-.pred-motm-select:focus {
-  outline: none;
-  border-color: var(--accent);
+.motm-dd-trigger[aria-expanded='true'] { border-color: var(--accent); }
+.motm-dd-caret { margin-left: auto; color: var(--muted); flex-shrink: 0; }
+.motm-dd-ph { color: var(--muted); font-weight: 500; }
+.motm-dd-sel { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.motm-dd-selname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.motm-dd-photo {
+  width: 30px; height: 30px; border-radius: 50%; object-fit: cover;
+  background: var(--surface); flex-shrink: 0;
 }
+.motm-dd-photo.placeholder { display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--muted); }
+.motm-dd-menu {
+  margin-top: 6px;
+  max-height: 290px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.motm-dd-menu[hidden] { display: none; }
+.motm-dd-grouplabel {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 6px 12px;
+}
+.motm-dd-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  padding: 7px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.motm-dd-opt.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.motm-dd-opt:active { background: var(--surface-2); }
+.motm-dd-clear { color: var(--muted); font-weight: 600; }
+.motm-opt-photo {
+  width: 32px; height: 32px; border-radius: 50%; object-fit: cover;
+  background: var(--surface-2); flex-shrink: 0;
+}
+.motm-opt-photo.placeholder { display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--muted); }
+.motm-opt-name {
+  flex: 1; min-width: 0; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.motm-opt-meta { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; }
+.motm-opt-pos {
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em;
+  color: var(--muted); background: var(--surface-2);
+  border-radius: 5px; padding: 1px 6px;
+}
+.motm-opt-num { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Read-only prediction status inside live/finished match detail */
 .pred-status {
@@ -2397,8 +2459,10 @@ tr.qual-direct .gt-name { color: var(--text); }
 .bkt-card {
   position: relative;
   z-index: 1;
-  width: calc(100% - var(--ko-gap));
-  margin-left: var(--ko-gap);
+  /* A little breathing room around every box (keeps left = lane width so the
+     connector bus still meets the card). */
+  width: calc(100% - var(--ko-gap) - 6px);
+  margin: 3px 3px 3px var(--ko-gap);
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -2453,7 +2517,7 @@ tr.qual-direct .gt-name { color: var(--text); }
   margin: 0 0 10px;
 }
 .bkt-third-card .bkt-cell { display: block; }
-.bkt-third-card .bkt-card { margin-left: 0; width: 100%; }
+.bkt-third-card .bkt-card { margin: 0; width: 100%; }
 
 .ko-team {
   display: flex;

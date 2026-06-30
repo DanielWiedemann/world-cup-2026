@@ -595,6 +595,29 @@ matchesEl.addEventListener('click', (e) => {
     });
     return;
   }
+  // SPOTM dropdown: open/close the menu.
+  const motmTrigger = e.target.closest('.motm-dd-trigger');
+  if (motmTrigger) {
+    e.stopPropagation();
+    const menu = motmTrigger.parentElement.querySelector('.motm-dd-menu');
+    const willOpen = menu.hasAttribute('hidden');
+    closeMotmMenus(willOpen ? menu : null);
+    if (willOpen) {
+      menu.removeAttribute('hidden');
+      motmTrigger.setAttribute('aria-expanded', 'true');
+    } else {
+      menu.setAttribute('hidden', '');
+      motmTrigger.setAttribute('aria-expanded', 'false');
+    }
+    return;
+  }
+  // SPOTM dropdown: a player row (or "No pick").
+  const motmOpt = e.target.closest('.motm-dd-opt');
+  if (motmOpt) {
+    e.stopPropagation();
+    onMotmPickDD(motmOpt);
+    return;
+  }
   // Share button.
   const shareBtn = e.target.closest('.share-btn');
   if (shareBtn) {
@@ -702,9 +725,9 @@ playerDialog?.addEventListener('click', (e) => {
   if (!insideDialog) playerDialog.close();
 });
 // Superior Player of the Match dropdown (draft prediction).
-matchesEl.addEventListener('change', (e) => {
-  const motmSel = e.target.closest('.pred-motm-select');
-  if (motmSel) onMotmChange(motmSel);
+// Close any open SPOTM dropdown when tapping elsewhere.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.motm-dd')) closeMotmMenus();
 });
 
 // Keyboard accessibility — Enter/Space on a focused badge opens the dialog.
@@ -2491,19 +2514,36 @@ function squadList(abbr) {
     .sort((a, b) => POS_RANK[a.pos] - POS_RANK[b.pos] || a.num - b.num);
 }
 
-// One team's players as an <optgroup> for the MOTM dropdown. A dropdown keeps
-// the whole squad reachable without the old horizontal-scroll chip maze.
-function motmOptgroup(team, squad, motm) {
+// What the closed dropdown shows: the chosen player's photo + name, or a hint.
+function motmTriggerContent(motm) {
+  if (!motm) return `<span class="motm-dd-ph">Pick a player (optional)</span>`;
+  const photo = photoFor(motm.abbr, motm.jersey);
+  const img = photo
+    ? `<img class="motm-dd-photo" src="${escapeHtml(photo)}" alt="" />`
+    : `<span class="motm-dd-photo placeholder">${escapeHtml(String(motm.jersey || ''))}</span>`;
+  return `<span class="motm-dd-sel">${img}<span class="motm-dd-selname">${escapeHtml(motm.name)}</span></span>`;
+}
+
+// One team's players as rich rows (photo + name + position + number) for the
+// custom MOTM dropdown — a native <select> can't show photos.
+function motmGroup(team, squad, motm) {
   if (!team || !squad.length) return '';
   const label = team.short || team.name || team.abbr || '';
-  const opts = squad
+  const rows = squad
     .map((pl) => {
-      const sel =
-        motm && motm.abbr === team.abbr && String(motm.jersey) === String(pl.num);
-      return `<option value="${escapeHtml(team.abbr)}|${pl.num}"${sel ? ' selected' : ''}>${escapeHtml(pl.name)} · #${pl.num}</option>`;
+      const sel = motm && motm.abbr === team.abbr && String(motm.jersey) === String(pl.num);
+      const photo = pl.photo
+        ? `<img class="motm-opt-photo" src="${escapeHtml(pl.photo)}" alt="" loading="lazy" />`
+        : `<span class="motm-opt-photo placeholder">${pl.num}</span>`;
+      const pos = pl.pos ? `<span class="motm-opt-pos">${escapeHtml(pl.pos)}</span>` : '';
+      return `<button type="button" class="motm-dd-opt${sel ? ' selected' : ''}" role="option" aria-selected="${sel}" data-abbr="${escapeHtml(team.abbr)}" data-jersey="${pl.num}" data-name="${escapeHtml(pl.name)}">
+        ${photo}
+        <span class="motm-opt-name">${escapeHtml(pl.name)}</span>
+        <span class="motm-opt-meta">${pos}<span class="motm-opt-num">#${pl.num}</span></span>
+      </button>`;
     })
     .join('');
-  return `<optgroup label="${escapeHtml(label)}">${opts}</optgroup>`;
+  return `<div class="motm-dd-grouplabel">${escapeHtml(label)}</div>${rows}`;
 }
 
 function renderPredictionPanel(e) {
@@ -2540,12 +2580,18 @@ function renderPredictionPanel(e) {
     SHOW_SPOTM && (homeSquad.length || awaySquad.length)
       ? `
     <div class="pred-motm">
-      <label class="pred-motm-label" for="motm-${escapeHtml(e.id)}">⭐ Superior Player of the Match <span class="motm-bonus">+3</span></label>
-      <select class="pred-motm-select" id="motm-${escapeHtml(e.id)}" data-ev="${escapeHtml(e.id)}">
-        <option value=""${!motm ? ' selected' : ''}>— Pick a player (optional) —</option>
-        ${motmOptgroup(e.home, homeSquad, motm)}
-        ${motmOptgroup(e.away, awaySquad, motm)}
-      </select>
+      <span class="pred-motm-label">⭐ Superior Player of the Match <span class="motm-bonus">+3</span></span>
+      <div class="motm-dd" data-ev="${escapeHtml(e.id)}">
+        <button type="button" class="motm-dd-trigger" aria-haspopup="listbox" aria-expanded="false">
+          ${motmTriggerContent(motm)}
+          <span class="motm-dd-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="motm-dd-menu" role="listbox" hidden>
+          <button type="button" class="motm-dd-opt motm-dd-clear" data-clear="1">No pick</button>
+          ${motmGroup(e.home, homeSquad, motm)}
+          ${motmGroup(e.away, awaySquad, motm)}
+        </div>
+      </div>
     </div>`
       : '';
   return `
@@ -2603,25 +2649,34 @@ function onPredictionStep(btn) {
   render(); // draft only — nothing persisted yet
 }
 
-function onMotmChange(select) {
-  const id = select.dataset.ev;
-  if (getPrediction(id)) return; // locked
+// A pick from the custom SPOTM dropdown (a row, or the "No pick" clear button).
+function onMotmPickDD(opt) {
+  const dd = opt.closest('.motm-dd');
+  const id = dd && dd.dataset.ev;
+  if (!id || getPrediction(id)) return; // locked
   const cur = { ...getDraft(id) };
   cur.h = cur.h || 0;
   cur.a = cur.a || 0;
-  const val = select.value;
-  if (!val) {
+  if (opt.dataset.clear) {
     delete cur.motm;
   } else {
-    const [abbr, jerseyStr] = val.split('|');
-    const jersey = parseInt(jerseyStr, 10);
-    const pl = squadList(abbr).find((p) => String(p.num) === String(jersey));
-    cur.motm = { abbr, jersey, name: pl ? pl.name : '' };
+    cur.motm = {
+      abbr: opt.dataset.abbr,
+      jersey: parseInt(opt.dataset.jersey, 10),
+      name: opt.dataset.name,
+    };
   }
   draftPredictions[id] = cur;
-  // No re-render: the native <select> already shows the choice, and rebuilding
-  // the panel mid-interaction is jarring. The draft persists into the next
-  // render (e.g. a score step) and is read when Save commits.
+  render(); // refresh the trigger + selected row; the menu rebuilds closed
+}
+
+function closeMotmMenus(except) {
+  document.querySelectorAll('.motm-dd-menu:not([hidden])').forEach((m) => {
+    if (m === except) return;
+    m.setAttribute('hidden', '');
+    const t = m.parentElement && m.parentElement.querySelector('.motm-dd-trigger');
+    if (t) t.setAttribute('aria-expanded', 'false');
+  });
 }
 
 // Commit the draft → permanent, locked prediction. This is what unlocks the
