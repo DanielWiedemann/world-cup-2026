@@ -340,11 +340,9 @@ nextBannerEl.addEventListener('click', (e) => {
     while (n && n !== document.body) {
       if (n.nodeType === 1) {
         if (
-          n.classList?.contains('bracket-wrap') ||
-          n.classList?.contains('motm-scroll') ||
+          n.classList?.contains('bkt-scroll') ||
           n.classList?.contains('filters') ||
-          n.classList?.contains('filters-track') ||
-          n.classList?.contains('motm-picker')
+          n.classList?.contains('filters-track')
         ) return true;
         const s = getComputedStyle(n);
         if (
