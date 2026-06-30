@@ -3922,18 +3922,20 @@ function qualClass(t) {
   return t.rank <= 2 ? 'qual-direct' : t.rank === 3 ? 'qual-maybe' : '';
 }
 
-// A team's group-stage results in order (oldest→newest) as 'w' | 'd' | 'l',
-// derived from the finished group matches in state.events (before the knockouts
-// begin on June 28). Drives the coloured form dots in the group table.
-function teamGroupForm(abbr) {
-  const KO = new Date('2026-06-28T00:00:00Z').getTime();
+// A team's group-stage results in order (oldest→newest) as 'w' | 'd' | 'l'.
+// A group game is one against another team in the SAME group — identifying them
+// by opponent (not by date) avoids a final-matchday game that straddles the
+// knockout date being dropped. Drives the coloured form dots.
+function teamGroupForm(abbr, groupAbbrs) {
   return state.events
-    .filter(
-      (e) =>
-        e.state === 'post' &&
-        new Date(e.date).getTime() < KO &&
-        (e.home?.abbr === abbr || e.away?.abbr === abbr)
-    )
+    .filter((e) => {
+      if (e.state !== 'post') return false;
+      const isHome = e.home?.abbr === abbr;
+      const isAway = e.away?.abbr === abbr;
+      if (!isHome && !isAway) return false;
+      const opp = isHome ? e.away?.abbr : e.home?.abbr;
+      return opp && groupAbbrs.has(opp);
+    })
     .sort((a, b) => new Date(a.date) - new Date(b.date))
     .map((e) => {
       const home = e.home?.abbr === abbr;
@@ -3945,8 +3947,8 @@ function teamGroupForm(abbr) {
     .filter(Boolean);
 }
 
-function formDots(abbr) {
-  const form = teamGroupForm(abbr);
+function formDots(abbr, groupAbbrs) {
+  const form = teamGroupForm(abbr, groupAbbrs);
   if (!form.length) return '<span class="gt-form-empty">–</span>';
   const label = { w: 'Win', d: 'Draw', l: 'Loss' };
   return form
@@ -3963,6 +3965,7 @@ function groupsHTML() {
   }
   const cards = s.groups
     .map((g) => {
+      const groupAbbrs = new Set(g.entries.map((en) => en.abbr));
       const rows = g.entries
         .map((t) => {
           const color = safeHex(t.noteColor);
@@ -3974,7 +3977,7 @@ function groupsHTML() {
               <span class="gt-name">${escapeHtml(t.name)}</span>
             </td>
             <td>${escapeHtml(t.gp)}</td>
-            <td class="gt-form">${formDots(t.abbr)}</td>
+            <td class="gt-form">${formDots(t.abbr, groupAbbrs)}</td>
             <td class="gt-gd">${escapeHtml(t.gd)}</td>
             <td class="gt-pts">${escapeHtml(t.pts)}</td>
           </tr>`;
