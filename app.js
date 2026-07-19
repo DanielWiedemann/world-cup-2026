@@ -291,6 +291,36 @@ function syncLiveTab() {
   }
 }
 
+// Once the Final is won, a golden "🏆 Champions" tab appears at the front and
+// becomes the default landing — the tournament's grand finale greets you first.
+let championsAutoShown = false;
+function syncChampionsTab() {
+  if (swipeActive) return;
+  const show = championsReady();
+  let champBtn = filtersBar.querySelector('.filter[data-filter="champions"]');
+  if (show && !champBtn) {
+    champBtn = document.createElement('button');
+    champBtn.className = 'filter filter-champions';
+    champBtn.dataset.filter = 'champions';
+    champBtn.setAttribute('role', 'tab');
+    champBtn.innerHTML = '<span class="champ-star">🏆</span>Champions';
+    const track = filtersBar.querySelector('.filters-track');
+    track.insertBefore(champBtn, track.querySelector('.filter'));
+    updateIndicator(true);
+  } else if (!show && champBtn) {
+    champBtn.remove();
+    if (state.filter === 'champions') setFilter('all');
+    else updateIndicator(true);
+    return;
+  }
+  // Land on the Champions page by default the first time it's available and the
+  // user hasn't navigated elsewhere.
+  if (show && !championsAutoShown && !userNavigated) {
+    championsAutoShown = true;
+    setFilter('champions');
+  }
+}
+
 refreshBtn.addEventListener('click', () => {
   load({ force: true });
   if (state.filter === 'groups') ensureStandings(true);
@@ -653,11 +683,26 @@ matchesEl.addEventListener('click', (e) => {
     }
     // collapsed match card → let it fall through to the card-expand handler
   }
-  // Player badge → open overlay (timeline, pitch, or scorer list).
-  const badge = e.target.closest('.tl-badge.photo, .pp-badge.photo, .sc-photo[data-player-photo]');
+  // Player badge → open overlay (timeline, pitch, scorer list, champion squad).
+  const badge = e.target.closest('.tl-badge.photo, .pp-badge.photo, .sc-photo[data-player-photo], .ch-player[data-player-photo]');
   if (badge && badge.dataset.playerPhoto) {
     e.stopPropagation();
     openPlayerDialog(badge.dataset);
+    return;
+  }
+  // Champions page → jump into the full match view with all the stats.
+  const champStatsBtn = e.target.closest('.ch-stats-btn[data-champ-stats]');
+  if (champStatsBtn) {
+    e.stopPropagation();
+    const id = champStatsBtn.dataset.champStats;
+    userNavigated = true;
+    state.expanded.add(id);
+    ensureStats(id);
+    setFilter('all');
+    requestAnimationFrame(() => {
+      const c = matchesEl.querySelector(`.match[data-event-id="${CSS.escape(id)}"]`);
+      if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
     return;
   }
   // Lineups sub-section toggle (independent expand state per event).
@@ -1079,6 +1124,9 @@ function normalize(ev) {
     date: ev.date, // ISO UTC
     name: ev.name,
     shortName: ev.shortName,
+    // ESPN tags the round on season.slug — 'final', '3rd-place-match', etc.
+    // We use this to give the World Cup Final its own epic treatment.
+    slug: (ev.season && ev.season.slug) || '',
     state: status.state || 'pre', // pre | in | post
     detail: status.shortDetail || status.detail || '',
     completed: !!status.completed,
@@ -1272,6 +1320,37 @@ function totalGoals(e) {
   return (parseInt(e.home?.score, 10) || 0) + (parseInt(e.away?.score, 10) || 0);
 }
 
+// --- The Final -------------------------------------------------------------
+// ESPN slugs the championship match 'final'. It gets the whole app's special
+// treatment: an epic golden LIVE stage, and a Champions page once it's over.
+function isFinalMatch(e) {
+  return !!e && e.slug === 'final';
+}
+function finalMatch() {
+  return state.events.find(isFinalMatch) || null;
+}
+// The winning side of a finished match: 'home' | 'away' | null. Falls back to
+// the scoreline (incl. penalty shootout) if ESPN hasn't flagged a winner yet.
+function winnerSide(e) {
+  if (!e) return null;
+  if (e.winner) return e.winner;
+  if (e.state !== 'post') return null;
+  if (e.shootout) {
+    if (e.shootout.home > e.shootout.away) return 'home';
+    if (e.shootout.away > e.shootout.home) return 'away';
+  }
+  const h = parseInt(e.home?.score, 10) || 0;
+  const a = parseInt(e.away?.score, 10) || 0;
+  if (h > a) return 'home';
+  if (a > h) return 'away';
+  return null;
+}
+// The Champions page is live once the final has finished with a winner.
+function championsReady() {
+  const f = finalMatch();
+  return !!(f && f.state === 'post' && winnerSide(f));
+}
+
 // Dates worth re-fetching for fresh scores: yesterday (overnight finals),
 // today, tomorrow, plus any currently-live match's date.
 function recentDateSet() {
@@ -1317,6 +1396,7 @@ async function pollScores({ celebrate = true, throttleMs = 0 } = {}) {
     saveCache(state.events);
     setUpdated(Date.now());
     syncLiveTab();
+    syncChampionsTab();
     // Which live matches just had their score tick up this poll.
     const scored = state.events.filter(
       (e) =>
@@ -1525,6 +1605,7 @@ async function load({ force = false } = {}) {
     setUpdated(Date.now());
     setStatus('');
     syncLiveTab();
+    syncChampionsTab();
     render();
     handleMatchDeepLink();
     resolvePredictionStats();
@@ -3598,9 +3679,24 @@ async function ensureStats(eventId, { force = false } = {}) {
   const ev = state.events.find((e) => e.id === eventId);
   const cached = state.stats[eventId];
   const isLive = ev && ev.state === 'in';
+  // A finished match whose cached timeline was captured mid-game (ESPN's summary
+  // lags the scoreboard, so late goals were missing when it was cached) shows
+  // fewer goals than the final score. Never treat such a cache as fresh — it
+  // must refetch so all goals appear. Without this, the 2-hour TTL could pin a
+  // stale "6 of 10 goals" timeline in place. (See timelineGoalCount/totalGoals.)
+  const goalsIncomplete =
+    ev &&
+    ev.state === 'post' &&
+    cached &&
+    cached.timeline &&
+    !cached.error &&
+    cached.fetchedAt &&
+    Date.now() - cached.fetchedAt > 30 * 1000 && // don't hammer if ESPN truly lacks the data
+    timelineGoalCount(cached, ev) < totalGoals(ev);
   const isFresh =
     cached &&
     cached.fetchedAt &&
+    !goalsIncomplete &&
     Date.now() - cached.fetchedAt < (isLive ? 12 * 1000 : STATS_CACHE_TTL_MS);
   if (!force && cached && isFresh && !cached.error) return;
   if (cached && cached.loading) return;
@@ -3623,9 +3719,10 @@ async function ensureStats(eventId, { force = false } = {}) {
     };
     state.stats[eventId] = { rows, timeline, lineups, info, odds, fetchedAt: Date.now() };
     saveStatsCache();
-    // Re-render if this match is on screen: expanded in a list, or the live
-    // tab (where live matches are force-expanded but not in state.expanded).
-    if (state.expanded.has(eventId) || state.filter === 'live' || state.filter === 'scorers') render();
+    // Re-render if this match is on screen: expanded in a list, the live tab
+    // (live matches are force-expanded but not in state.expanded), or the
+    // Champions page (its star player + scorers come from this timeline).
+    if (state.expanded.has(eventId) || state.filter === 'live' || state.filter === 'scorers' || state.filter === 'champions') render();
     updatePredictionsChip(); // MOTM bonus may now resolve
     if (predictionsDialog?.open) renderPredictionsList(); // star man may resolve
   } catch (err) {
@@ -4021,12 +4118,276 @@ function liveHTML() {
     sel = evs[0];
     state.liveSelected = sel.id; // heal a stale/empty selection (e.g. a game ended)
   }
+  // The World Cup Final gets its own epic golden stage instead of the ordinary
+  // red live card.
+  if (isFinalMatch(sel)) {
+    const switcher = evs.length > 1 ? liveSwitcherHTML(evs, sel.id) : '';
+    return `<section class="day live-only final-stage-wrap">${switcher}${finalStageHTML(sel)}</section>`;
+  }
   const switcher = evs.length > 1 ? liveSwitcherHTML(evs, sel.id) : '';
   const card =
     sel.state === 'in'
       ? matchCard(sel, { hero: true, forceExpand: true })
       : preKickoffCard(sel);
   return `<section class="day live-only">${switcher}${card}</section>`;
+}
+
+// The epic World Cup Final stage — golden, ceremonial. Frames the same live
+// match card (score, timeline, stats) inside a "THE FINAL" hero so the biggest
+// game of the tournament never looks like an ordinary fixture.
+function finalStageHTML(e) {
+  const live = e.state === 'in';
+  const done = e.state === 'post';
+  const homeName = e.home?.short || e.home?.name || 'TBD';
+  const awayName = e.away?.short || e.away?.name || 'TBD';
+  const flag = (tm, cls) =>
+    tm?.logo
+      ? `<img class="fin-flag ${cls}" src="${escapeHtml(tm.logo)}" alt="${escapeHtml(tm.name || '')}" loading="lazy" />`
+      : `<span class="fin-flag ${cls} placeholder">${escapeHtml((tm?.abbr || '?').slice(0, 3))}</span>`;
+  // Centre column: countdown before kickoff, live score while playing, FT after.
+  let centre;
+  if (live) {
+    centre = `
+      <div class="fin-score">
+        <span class="fin-num">${escapeHtml(String(e.home?.score ?? 0))}</span>
+        <span class="fin-dash">–</span>
+        <span class="fin-num">${escapeHtml(String(e.away?.score ?? 0))}</span>
+      </div>
+      <span class="fin-live-min"><span class="fin-live-dot"></span>${escapeHtml(e.detail || 'LIVE')}</span>`;
+  } else if (done) {
+    const pens = e.shootout
+      ? `<span class="fin-pens">${e.shootout.home}–${e.shootout.away} pens</span>`
+      : '';
+    centre = `
+      <div class="fin-score">
+        <span class="fin-num">${escapeHtml(String(e.home?.score ?? 0))}</span>
+        <span class="fin-dash">–</span>
+        <span class="fin-num">${escapeHtml(String(e.away?.score ?? 0))}</span>
+      </div>
+      <span class="fin-ft">Full time</span>${pens}`;
+  } else {
+    centre = `
+      <div class="fin-countdown" id="fin-countdown" data-kickoff="${escapeHtml(e.date)}">
+        ${finalCountdownInner(e.date)}
+      </div>
+      <span class="fin-koff">Kicks off ${escapeHtml(formatTime(e.date))}</span>`;
+  }
+  const venue = e.venue
+    ? `<div class="fin-venue">📍 ${escapeHtml(e.venue)}${e.city ? ', ' + escapeHtml(e.city) : ''}</div>`
+    : '';
+  // The live/finished body reuses the normal expanded match view (win
+  // probability, timeline, stats, lineups). Pre-kickoff shows the prediction
+  // panel so a call can still be made right up to kickoff.
+  const body = live || done
+    ? matchCard(e, { hero: true, forceExpand: true })
+    : `<div class="match pre expanded final-pre" data-event-id="${escapeHtml(e.id)}"><div class="game-info">${oddsWidget(e)}${renderPredictionPanel(e)}</div></div>`;
+  return `
+    <div class="final-stage${live ? ' is-live' : ''}${done ? ' is-done' : ''}">
+      <div class="fin-rays" aria-hidden="true"></div>
+      <header class="fin-head">
+        <div class="fin-trophy" aria-hidden="true">🏆</div>
+        <div class="fin-kicker">FIFA World Cup 2026</div>
+        <h2 class="fin-title">THE FINAL</h2>
+        ${venue}
+      </header>
+      <div class="fin-teams">
+        <div class="fin-team home">${flag(e.home, 'home')}<span class="fin-team-name">${escapeHtml(homeName)}</span></div>
+        <div class="fin-centre">${centre}</div>
+        <div class="fin-team away">${flag(e.away, 'away')}<span class="fin-team-name">${escapeHtml(awayName)}</span></div>
+      </div>
+    </div>
+    ${body}`;
+}
+
+// The h/m/s digits inside the pre-kickoff countdown. Recomputed each second by
+// tickFinalCountdown() without a full re-render.
+function finalCountdownInner(kickoffIso) {
+  const ms = new Date(kickoffIso).getTime() - Date.now();
+  if (ms <= 0) {
+    return `<span class="fin-cd-soon"><span class="fin-cd-pulse"></span>Any moment now…</span>`;
+  }
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const cell = (v, label) =>
+    `<span class="fin-cd-cell"><b>${String(v).padStart(2, '0')}</b><small>${label}</small></span>`;
+  return `${cell(h, 'hrs')}${cell(m, 'min')}${cell(s, 'sec')}`;
+}
+
+// Drives the pre-kickoff countdown once a second. Self-stops when the element
+// leaves the DOM (tab switched away) or kickoff arrives.
+let finalCountdownTimer = null;
+function tickFinalCountdown() {
+  const el = document.getElementById('fin-countdown');
+  if (!el) {
+    if (finalCountdownTimer) { clearInterval(finalCountdownTimer); finalCountdownTimer = null; }
+    return;
+  }
+  const iso = el.dataset.kickoff;
+  el.innerHTML = finalCountdownInner(iso);
+  // Kickoff reached — re-render so the stage flips to the live/waiting view.
+  if (new Date(iso).getTime() - Date.now() <= 0) {
+    if (finalCountdownTimer) { clearInterval(finalCountdownTimer); finalCountdownTimer = null; }
+  }
+}
+function syncFinalCountdown() {
+  const needed = !!document.getElementById('fin-countdown');
+  if (needed && !finalCountdownTimer) {
+    finalCountdownTimer = setInterval(tickFinalCountdown, 1000);
+  } else if (!needed && finalCountdownTimer) {
+    clearInterval(finalCountdownTimer);
+    finalCountdownTimer = null;
+  }
+}
+
+// --- Champions page --------------------------------------------------------
+// The grand finale. Once the Final is won, this becomes the app's front page:
+// the winning nation, their flag, the trophy, a burst of confetti, the star of
+// the final, and the whole champion squad — plus a way into the full stats.
+
+// Find a player's photo (and jersey) by name within a team's squad, matching on
+// last name so "K. Mbappé" still resolves to the photos.json entry.
+function squadPhotoByName(abbr, name) {
+  if (!name) return null;
+  const key = lastNameKey(name);
+  for (const p of squadList(abbr)) {
+    if (lastNameKey(p.name) === key) return p;
+  }
+  return null;
+}
+
+// Goals scored in the final, grouped by scorer for the winning side, most goals
+// first. Drives the "how they won it" scorer line.
+function finalScorers(e, side) {
+  const entry = state.stats[e.id];
+  if (!entry || !entry.timeline) return [];
+  const tally = new Map();
+  for (const t of entry.timeline) {
+    if (t.kind !== 'goal' && t.kind !== 'penalty-goal') continue;
+    if (timelineSide(t, e) !== side) continue;
+    const key = lastNameKey(t.player);
+    const cur = tally.get(key) || { name: t.player, mins: [] };
+    cur.mins.push(t.minute || '');
+    tally.set(key, cur);
+  }
+  return [...tally.values()].sort((a, b) => b.mins.length - a.mins.length);
+}
+
+function championsHTML() {
+  const e = finalMatch();
+  if (!e || e.state !== 'post') {
+    return `<p class="empty">The champions will be crowned right here after the final whistle.</p>`;
+  }
+  const wSide = winnerSide(e);
+  const win = wSide === 'home' ? e.home : e.away;
+  const lose = wSide === 'home' ? e.away : e.home;
+  if (!win) return `<p class="empty">Awaiting the final result…</p>`;
+
+  const winColor = safeHex(win.color) || '#c8a24a';
+  const winScore = wSide === 'home' ? e.home?.score : e.away?.score;
+  const loseScore = wSide === 'home' ? e.away?.score : e.home?.score;
+  const pens = e.shootout
+    ? `<span class="ch-pens">(${wSide === 'home' ? e.shootout.home : e.shootout.away}–${wSide === 'home' ? e.shootout.away : e.shootout.home} on penalties)</span>`
+    : '';
+
+  const winFlag = win.logo
+    ? `<img class="ch-flag" src="${escapeHtml(win.logo)}" alt="${escapeHtml(win.name || '')} flag" />`
+    : `<span class="ch-flag placeholder">${escapeHtml((win.abbr || '?').slice(0, 3))}</span>`;
+  const smallFlag = (tm) =>
+    tm?.logo
+      ? `<img class="ch-mini-flag" src="${escapeHtml(tm.logo)}" alt="" loading="lazy" />`
+      : `<span class="ch-mini-flag placeholder">${escapeHtml((tm?.abbr || '?').slice(0, 3))}</span>`;
+
+  // Confetti: a fixed set of pieces, tinted with the winner's colour, gold, and
+  // white. Positions/delays are deterministic (no Math.random — resume-safe).
+  const confettiColors = [winColor, '#ffd447', '#ffffff', winColor, '#ffe58a'];
+  const confetti = Array.from({ length: 40 }, (_, i) => {
+    const left = (i * 2.5 + (i % 5) * 3) % 100;
+    const delay = ((i % 10) * 0.35).toFixed(2);
+    const dur = (3 + (i % 6) * 0.5).toFixed(2);
+    const color = confettiColors[i % confettiColors.length];
+    const tilt = (i % 2 ? 1 : -1) * (20 + (i % 4) * 12);
+    return `<span class="ch-confetti" style="left:${left}%;background:${color};animation-delay:${delay}s;animation-duration:${dur}s;--tilt:${tilt}deg"></span>`;
+  }).join('');
+
+  // Star of the final.
+  const star = superiorPlayer(e);
+  let starCard = '';
+  if (star) {
+    const sp = squadPhotoByName(star.abbr, star.name) || squadPhotoByName(e.home?.abbr, star.name) || squadPhotoByName(e.away?.abbr, star.name);
+    const photo = sp?.photo;
+    const bits = [];
+    if (star.goals) bits.push(`${star.goals} goal${star.goals === 1 ? '' : 's'}`);
+    if (star.assists) bits.push(`${star.assists} assist${star.assists === 1 ? '' : 's'}`);
+    const photoEl = photo
+      ? `<img class="ch-star-photo" src="${escapeHtml(photo)}" alt="${escapeHtml(star.name)}" />`
+      : `<span class="ch-star-photo placeholder">${escapeHtml((star.abbr || '').slice(0, 3))}</span>`;
+    starCard = `
+      <div class="ch-star">
+        <span class="ch-star-badge">⭐ Star of the Final</span>
+        ${photoEl}
+        <div class="ch-star-id">
+          <span class="ch-star-name">${escapeHtml(star.name)}</span>
+          ${bits.length ? `<span class="ch-star-line">${escapeHtml(bits.join(' · '))}</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // How they won it — winner's scorers in the final.
+  const scorers = finalScorers(e, wSide);
+  const scorersCard = scorers.length
+    ? `<div class="ch-scorers">
+         <h3 class="ch-sec-title">How they won it</h3>
+         <ul class="ch-scorer-list">
+           ${scorers.map((s) => `<li><span class="ch-ball">⚽</span><span class="ch-scorer-name">${escapeHtml(s.name)}</span><span class="ch-scorer-mins">${escapeHtml(s.mins.filter(Boolean).join(', '))}</span></li>`).join('')}
+         </ul>
+       </div>`
+    : '';
+
+  // The champion squad — every player's photo.
+  const squad = squadList(win.abbr);
+  const squadGrid = squad.length
+    ? `<div class="ch-squad">
+         <h3 class="ch-sec-title">${escapeHtml(win.short || win.name)} — World Champions</h3>
+         <div class="ch-squad-grid">
+           ${squad.map((p) => `
+             <figure class="ch-player" data-player-photo="${escapeHtml(p.photo || '')}" data-player-name="${escapeHtml(p.name)}" data-player-team="${escapeHtml(ABBR_TO_GUARDIAN[win.abbr] || '')}" data-player-pos="${escapeHtml(p.pos || '')}" data-player-jersey="${escapeHtml(String(p.num))}" data-player-abbr="${escapeHtml(win.abbr || '')}" role="button" tabindex="0">
+               ${p.photo
+                 ? `<img class="ch-player-photo" src="${escapeHtml(p.photo)}" alt="${escapeHtml(p.name)}" loading="lazy" />`
+                 : `<span class="ch-player-photo placeholder">${escapeHtml(String(p.num))}</span>`}
+               <figcaption class="ch-player-name">${escapeHtml(p.name)}</figcaption>
+             </figure>`).join('')}
+         </div>
+       </div>`
+    : '';
+
+  return `
+    <section class="champions" style="--win:${winColor}">
+      <div class="ch-confetti-layer" aria-hidden="true">${confetti}</div>
+      <div class="ch-hero">
+        <div class="ch-rays" aria-hidden="true"></div>
+        <div class="ch-kicker"><span class="ch-kicker-line"></span>FIFA World Cup 2026<span class="ch-kicker-line"></span></div>
+        <div class="ch-trophy" aria-hidden="true">🏆</div>
+        <div class="ch-flag-ring">${winFlag}</div>
+        <h1 class="ch-country">${escapeHtml(win.name || win.short || '')}</h1>
+        <div class="ch-crown">World Champions</div>
+        <div class="ch-stars" aria-hidden="true">★ ★ ★</div>
+      </div>
+
+      <div class="ch-scoreline">
+        <div class="ch-sl-team win">${smallFlag(win)}<span class="ch-sl-name">${escapeHtml(win.short || win.abbr)}</span></div>
+        <div class="ch-sl-score"><b>${escapeHtml(String(winScore ?? 0))}</b><span>–</span><b>${escapeHtml(String(loseScore ?? 0))}</b></div>
+        <div class="ch-sl-team">${smallFlag(lose)}<span class="ch-sl-name">${escapeHtml(lose?.short || lose?.abbr || '')}</span></div>
+      </div>
+      <div class="ch-final-meta">Final${pens ? ' ' + pens : ''}${e.venue ? ` · ${escapeHtml(e.venue)}` : ''}</div>
+
+      ${starCard}
+      ${scorersCard}
+      ${squadGrid}
+
+      <button type="button" class="ch-stats-btn" data-champ-stats="${escapeHtml(e.id)}">View full match &amp; stats →</button>
+    </section>`;
 }
 
 // A segmented switcher across simultaneous live/imminent games. Each chip
@@ -4118,6 +4479,7 @@ function viewHTML(filter) {
   try {
     switch (filter) {
       case 'live': return liveHTML();
+      case 'champions': return championsHTML();
       case 'groups': return groupsHTML();
       case 'bracket': return bracketHTML();
       case 'scorers': return scorersHTML();
@@ -4130,14 +4492,42 @@ function viewHTML(filter) {
 
 // Paint the whole shell red while the LIVE tab is active (header, pills,
 // status bar) — not just the match cards.
-function setLiveMode(on) {
-  document.body.classList.toggle('live-mode', on);
+function setLiveMode(on, goldFinal = false) {
+  // The Final wears gold, not the ordinary live red.
+  document.body.classList.toggle('live-mode', on && !goldFinal);
+  document.body.classList.toggle('final-mode', on && goldFinal);
   const themeMeta = document.querySelector('meta[name="theme-color"]');
-  if (themeMeta) themeMeta.content = on ? '#b00d1c' : '#0c5c3c';
+  if (themeMeta) {
+    themeMeta.content = on ? (goldFinal ? '#a9791a' : '#b00d1c') : (state.filter === 'champions' ? '#a9791a' : '#0c5c3c');
+  }
+}
+
+// Is the LIVE tab currently focused on the Final? (drives gold theming)
+function liveShowingFinal() {
+  if (state.filter !== 'live') return false;
+  const evs = liveTabEvents();
+  if (!evs.length) return false;
+  const sel = (state.liveSelected && evs.find((e) => e.id === state.liveSelected)) || evs[0];
+  return isFinalMatch(sel);
 }
 
 function render() {
-  setLiveMode(state.filter === 'live' && !state.search.trim());
+  const onChampions = state.filter === 'champions' && !state.search.trim();
+  setLiveMode(state.filter === 'live' && !state.search.trim(), liveShowingFinal());
+  document.body.classList.toggle('champions-mode', onChampions);
+  if (onChampions) {
+    matchesEl.innerHTML = championsHTML();
+    const f = finalMatch();
+    if (f) ensureStats(f.id); // load timeline/stats so the standout resolves
+    // Champion squad photos need photos.json — re-render once it lands.
+    if (!photoDb) ensurePhotoDb().then(() => { if (state.filter === 'champions') render(); });
+    applyEntranceAnimation();
+    updateLivePolling();
+    if (nextBannerEl) nextBannerEl.hidden = true;
+    updatePredictionsChip();
+    updateIndicator(true);
+    return;
+  }
   // Search overrides the active tab: show every game that matches the query.
   if (state.search.trim()) {
     matchesEl.innerHTML = searchHTML();
@@ -4151,6 +4541,11 @@ function render() {
   if (state.filter === 'live') {
     matchesEl.innerHTML = liveHTML();
     for (const e of state.events.filter((x) => x.state === 'in')) ensureStats(e.id);
+    // The Final's pre-kickoff stage wants odds loaded so the win-probability
+    // bar can reveal, and a ticking countdown to kickoff.
+    const f = finalMatch();
+    if (f && f.state !== 'post') ensureStats(f.id);
+    syncFinalCountdown();
     applyEntranceAnimation();
     updateLivePolling();
     updateNextBanner();
@@ -4259,6 +4654,7 @@ requestPersistentStorage();
 load();
 ensureStandings();
 syncLiveTab();
+syncChampionsTab();
 
 // Park the tab bubble under the active tab on first paint, and keep it
 // aligned when the viewport (and therefore the pill layout) changes.
