@@ -302,6 +302,7 @@ let championsAutoShown = false;
 function syncChampionsTab() {
   if (swipeActive) return;
   const show = championsReady();
+  let changed = false;
   let champBtn = filtersBar.querySelector('.filter[data-filter="champions"]');
   if (show && !champBtn) {
     champBtn = document.createElement('button');
@@ -311,18 +312,31 @@ function syncChampionsTab() {
     champBtn.innerHTML = '<span class="champ-star">🏆</span>Champions';
     const track = filtersBar.querySelector('.filters-track');
     track.insertBefore(champBtn, track.querySelector('.filter'));
-    updateIndicator(true);
+    changed = true;
   } else if (!show && champBtn) {
     champBtn.remove();
     if (state.filter === 'champions') setFilter('all');
     else updateIndicator(true);
     return;
   }
+  // With the tournament over, the Upcoming and Today tabs have nothing left to
+  // show — retire them until the next World Cup.
+  let stranded = null;
+  if (show) {
+    for (const f of ['upcoming', 'today']) {
+      const b = filtersBar.querySelector(`.filter[data-filter="${f}"]`);
+      if (b) { b.remove(); changed = true; if (state.filter === f) stranded = f; }
+    }
+  }
   // Land on the Champions page by default the first time it's available and the
-  // user hasn't navigated elsewhere.
+  // user hasn't navigated elsewhere; also rescue anyone left on a retired tab.
   if (show && !championsAutoShown && !userNavigated) {
     championsAutoShown = true;
     setFilter('champions');
+  } else if (stranded) {
+    setFilter('champions');
+  } else if (changed) {
+    updateIndicator(true);
   }
 }
 
