@@ -3194,3 +3194,40 @@ body.champions-mode .app-header {
 }
 .ch-stats-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(255, 210, 90, 0.5); }
 .ch-stats-btn:active { transform: translateY(0); }
+
+/* --- Preview mode bar (hidden #preview=… feature) ------------------------- */
+.preview-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--gold) 16%, var(--surface));
+  border: 1px dashed color-mix(in srgb, var(--gold) 55%, var(--border));
+}
+.preview-tag {
+  font-size: 10px; font-weight: 900; letter-spacing: 0.12em;
+  padding: 2px 7px; border-radius: 6px;
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold-deep));
+  color: #3a2905;
+}
+.preview-what { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.preview-links { display: flex; gap: 6px; margin-left: auto; }
+.preview-link {
+  font-size: 12px; font-weight: 700; text-decoration: none;
+  padding: 4px 10px; border-radius: 999px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.preview-link.on {
+  color: #3a2905;
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold-deep));
+  border-color: transparent;
+}
+.preview-exit {
+  font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+  padding: 4px 10px; border-radius: 999px;
+  color: var(--text); background: var(--surface);
+  border: 1px solid var(--border);
+}
+.preview-links + .preview-exit { margin-left: 0; }

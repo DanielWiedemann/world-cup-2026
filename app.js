@@ -109,8 +109,13 @@ filtersBar.addEventListener('click', (ev) => {
   const btn = ev.target.closest('.filter');
   if (!btn) return;
   userNavigated = true; // a real tap — never auto-yank them away after this
+  // Tapping a tab leaves preview mode (drops the #preview hash).
+  if (previewMode()) history.replaceState(null, '', location.pathname + location.search);
   setFilter(btn.dataset.filter);
 });
+
+// Entering/leaving preview mode via the URL hash repaints the app.
+window.addEventListener('hashchange', () => render());
 
 function setFilter(filter) {
   state.filter = filter;
@@ -688,6 +693,12 @@ matchesEl.addEventListener('click', (e) => {
   if (badge && badge.dataset.playerPhoto) {
     e.stopPropagation();
     openPlayerDialog(badge.dataset);
+    return;
+  }
+  // Exit preview mode.
+  if (e.target.closest('[data-preview-exit]')) {
+    e.stopPropagation();
+    exitPreview();
     return;
   }
   // Champions page → jump into the full match view with all the stats.
@@ -4274,8 +4285,8 @@ function finalScorers(e, side) {
   return [...tally.values()].sort((a, b) => b.mins.length - a.mins.length);
 }
 
-function championsHTML() {
-  const e = finalMatch();
+function championsHTML(ev) {
+  const e = ev || finalMatch();
   if (!e || e.state !== 'post') {
     return `<p class="empty">The champions will be crowned right here after the final whistle.</p>`;
   }
@@ -4448,6 +4459,69 @@ function preKickoffCard(e) {
     </article>`;
 }
 
+// --- Preview mode ----------------------------------------------------------
+// A hidden way to see the Final stage and Champions page before they happen for
+// real: add #preview=final, #preview=final-live, or #preview=champions to the
+// URL. Strictly opt-in via the hash, so it never affects normal use.
+function previewMode() {
+  const m = /(?:^|[#&])preview=([\w-]+)/.exec(location.hash || '');
+  return m ? m[1] : null;
+}
+
+// A demo Final event for a given preview state — built from the real Final so
+// flags/venue are genuine, without mutating the real event or its cache.
+function previewEvent(mode) {
+  const f = finalMatch();
+  if (!f) return null;
+  const e = JSON.parse(JSON.stringify(f));
+  if (mode === 'final-live') {
+    e.state = 'in'; e.detail = "67'";
+    e.home.score = '2'; e.away.score = '1';
+  } else if (mode === 'champions') {
+    e.id = f.id + '::preview';
+    e.state = 'post'; e.completed = true; e.winner = 'home';
+    e.home.score = '2'; e.away.score = '1';
+    // Synthesise a timeline from the real winning squad so the star player and
+    // scorer list show real names + photos. In-memory only (never saved).
+    const squad = squadList(e.home.abbr);
+    if (!state.stats[e.id] && squad.length) {
+      const fwds = squad.filter((p) => p.pos === 'FWD');
+      const star = fwds[0] || squad[squad.length - 1];
+      const loseSquad = squadList(e.away.abbr);
+      const loseFwd = loseSquad.filter((p) => p.pos === 'FWD')[0] || loseSquad[loseSquad.length - 1];
+      const tl = [];
+      if (star) tl.push({ kind: 'goal', minute: "23'", clockValue: 1380, teamName: e.home.name, player: star.name });
+      if (loseFwd) tl.push({ kind: 'goal', minute: "58'", clockValue: 3480, teamName: e.away.name, player: loseFwd.name });
+      if (star) tl.push({ kind: 'goal', minute: "81'", clockValue: 4860, teamName: e.home.name, player: star.name });
+      state.stats[e.id] = { fetchedAt: Date.now(), timeline: tl, rows: [], lineups: null, odds: null, info: {} };
+    }
+  } else { // 'final' (pre-kickoff)
+    e.state = 'pre';
+  }
+  return e;
+}
+
+// Leave preview mode: drop the #preview hash and repaint the normal app.
+function exitPreview() {
+  if (finalCountdownTimer) { clearInterval(finalCountdownTimer); finalCountdownTimer = null; }
+  history.replaceState(null, '', location.pathname + location.search);
+  document.body.classList.remove('final-mode', 'champions-mode');
+  render();
+}
+
+function previewHTML(mode) {
+  const e = previewEvent(mode);
+  if (!e) return '<p class="empty">Preview needs the Final to be in the schedule.</p>';
+  const label = mode === 'champions' ? 'Champions page'
+    : mode === 'final-live' ? 'The Final — live' : 'The Final — pre-kickoff';
+  const links = ['final', 'final-live', 'champions']
+    .map((m) => `<a class="preview-link${m === mode ? ' on' : ''}" href="#preview=${m}">${m === 'final' ? 'Pre' : m === 'final-live' ? 'Live' : 'Champions'}</a>`)
+    .join('');
+  const bar = `<div class="preview-bar"><span class="preview-tag">PREVIEW</span><span class="preview-what">${escapeHtml(label)}</span><span class="preview-links">${links}</span><button type="button" class="preview-exit" data-preview-exit>Exit ✕</button></div>`;
+  if (mode === 'champions') return bar + championsHTML(e);
+  return bar + `<section class="day live-only final-stage-wrap">${finalStageHTML(e)}</section>`;
+}
+
 function listHTML() {
   const filtered = filterEvents(state.events);
   if (!filtered.length) {
@@ -4512,6 +4586,21 @@ function liveShowingFinal() {
 }
 
 function render() {
+  // Preview mode (#preview=…) short-circuits the normal tab logic.
+  const pv = previewMode();
+  if (pv) {
+    document.body.classList.remove('live-mode');
+    document.body.classList.toggle('final-mode', pv !== 'champions');
+    document.body.classList.toggle('champions-mode', pv === 'champions');
+    matchesEl.innerHTML = previewHTML(pv);
+    if (pv === 'champions' && !photoDb) ensurePhotoDb().then(() => { if (previewMode()) render(); });
+    syncFinalCountdown();
+    applyEntranceAnimation();
+    updateLivePolling();
+    if (nextBannerEl) nextBannerEl.hidden = true;
+    updateIndicator(true);
+    return;
+  }
   const onChampions = state.filter === 'champions' && !state.search.trim();
   setLiveMode(state.filter === 'live' && !state.search.trim(), liveShowingFinal());
   document.body.classList.toggle('champions-mode', onChampions);
